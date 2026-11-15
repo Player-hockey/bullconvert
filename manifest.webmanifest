@@ -2,7 +2,7 @@
   "id": "./",
   "name": "BullConvert — конвертер файлов",
   "short_name": "BullConvert",
-  "description": "Чертежи КОМПАС и AutoCAD, документы, книги, DjVu, фото, таблицы, аудио, видео и архивы.",
+  "description": "Документы, PDF, книги, DjVu, фото, таблицы, аудио, видео и архивы — прямо на вашем устройстве.",
   "lang": "ru",
   "start_url": "./",
   "scope": "./",
@@ -23,8 +23,7 @@
         "application/pdf": [".pdf"],
         "image/vnd.djvu": [".djvu", ".djv"],
         "application/epub+zip": [".epub"],
-        "application/x-fictionbook+xml": [".fb2"],
-        "application/octet-stream": [".cdw", ".frw", ".m3d", ".a3d", ".spw", ".dwg", ".dxf", ".bak"]
+        "application/x-fictionbook+xml": [".fb2"]
       }
     }
   ]

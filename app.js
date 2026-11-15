@@ -2,7 +2,7 @@
 
 /* =====================================================================
    BullConvert — конвертер файлов.
-   Почти всё работает прямо в браузере; КОМПАС/DWG и архивы RAR/7Z
+   Почти всё работает прямо в браузере; часть форматов
    обрабатывает локальный сервер (serve.ps1).
    Библиотеки подгружаются с CDN только когда нужны.
    ===================================================================== */
@@ -105,7 +105,15 @@ const MIME = {
 
 const extOf = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
 const baseOf = (name) => (name.includes('.') ? name.slice(0, name.lastIndexOf('.')) : name);
-const catOf = (ext) => Object.keys(CATEGORIES).find((c) => CATEGORIES[c].in.includes(ext)) || null;
+// Чертежи КОМПАС/DWG и архивы RAR/7Z обрабатывает только сервер на компьютере владельца.
+// Пока BullConvert открыт не на нём (публичный сайт, телефон, другой компьютер),
+// эти форматы считаются неподдерживаемыми и нигде не упоминаются.
+let pcFeatures = false;
+const catOf = (ext) => {
+  const c = Object.keys(CATEGORIES).find((k) => CATEGORIES[k].in.includes(ext)) || null;
+  if (!pcFeatures && (c === 'cad' || (c === 'archive' && ext !== 'zip'))) return null;
+  return c;
+};
 
 function formatSize(n) {
   if (n < 1024) return n + ' Б';
@@ -1641,7 +1649,7 @@ async function autoConnect() {
   let url = await findServer();
   if (url) { location.replace(url); return; }
 
-  text.innerHTML = '<b>Сервер BullConvert не запущен.</b> Фото, документы и таблицы работают и так, а для КОМПАС/DWG и архивов RAR/7Z он нужен.';
+  text.innerHTML = '<b>Сервер BullConvert не запущен.</b> Фото, документы и таблицы работают и так, а для некоторых форматов он нужен.';
   const btn = document.createElement('button');
   btn.className = 'btn primary';
   btn.textContent = 'Запустить BullConvert';
@@ -1666,7 +1674,7 @@ async function serverPost(path, file) {
   try { r = await fetch(path, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } }); }
   catch { throw new Error('Нет связи с сервером BullConvert. Откройте ярлык BullConvert на рабочем столе и повторите.'); }
   if (r.status === 404 || r.status === 405) {
-    throw new Error('Эта функция работает только через компьютер с BullConvert (КОМПАС-3D, RAR/7Z). Откройте адрес, который дал администратор, или установите BullConvert на свой компьютер.');
+    throw new Error('Этот формат здесь не поддерживается.');
   }
   if (r.status === 401) throw new Error('Нужно разрешение администратора — обновите страницу и запросите доступ.');
   if (!r.ok) throw new Error(serverError(await r.text()));
@@ -2158,8 +2166,7 @@ $('devicesBtn').onclick = async () => {
   if (!st) {
     // публичный сайт (GitHub Pages): сервера BullConvert нет, всё работает на самом устройстве
     $('devicesBody').innerHTML = `<p>✅ Этот сайт работает прямо на вашем устройстве — файлы никуда не загружаются.</p>
-      <p class="muted">Установите его как приложение и нажмите в «Настройках» «Подготовить к работе без интернета» — дальше конвертер работает даже в самолёте.
-      Чертежи КОМПАС/DWG и архивы RAR/7Z обрабатываются только на компьютере с BullConvert.</p>
+      <p class="muted">Установите его как приложение и нажмите в «Настройках» «Подготовить к работе без интернета» — дальше конвертер работает даже в самолёте.</p>
       <h3>Значок на экран</h3>${installHelpHtml()}
       <h3>Поделиться</h3><div class="qr-list"><div class="qr-card">${await qrSvg(location.origin + location.pathname)}<a href="${escapeHtml(location.origin + location.pathname)}">${escapeHtml(location.origin + location.pathname)}</a></div></div>`;
     return;
@@ -2167,7 +2174,7 @@ $('devicesBtn').onclick = async () => {
   if (!onThisPC) {
     const how = location.protocol === 'https:' ? 'через интернет (защищённое соединение)' : 'по домашней сети';
     $('devicesBody').innerHTML = `<p>✅ Вы подключены к компьютеру с BullConvert ${how}.</p>
-      <p class="muted">Фото, документы, книги и таблицы конвертируются прямо на этом устройстве. Чертежи КОМПАС/DWG и архивы RAR/7Z обрабатывает компьютер — он должен быть включён.</p>
+      <p class="muted">Фото, документы, книги и таблицы конвертируются прямо на этом устройстве.</p>
       <h3>Значок на экран</h3>${installHelpHtml()}`;
     return;
   }
@@ -2235,5 +2242,24 @@ async function pollAdmin() {
   } catch { /* сервер недоступен */ }
 }
 if (onThisPC && location.protocol.startsWith('http')) { pollAdmin(); setInterval(pollAdmin, 10000); }
+
+// Возможности компьютера владельца (КОМПАС/DWG, RAR/7Z) включаются только когда
+// BullConvert открыт на этом компьютере и его сервер отвечает
+(async () => {
+  if (!onThisPC || !location.protocol.startsWith('http')) return;
+  try {
+    const st = await (await fetch('/api/status', { cache: 'no-store' })).json();
+    if (!st.server) return;
+    pcFeatures = true;
+    document.body.classList.add('pc');
+    // файлы, добавленные до ответа сервера, определяем заново
+    for (const it of items) {
+      if (it.cat || it.status === 'work') continue;
+      await identify(it); rebuildTargets(it); refreshRow(it);
+      if (it.cat === 'archive') unpack(it);
+    }
+    updateToolbar();
+  } catch { /* сервера нет — только браузерные форматы */ }
+})();
 
 autoConnect();

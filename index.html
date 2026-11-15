@@ -27,7 +27,7 @@
           <a id="adminBtn" class="btn ghost" href="admin.html" hidden>⚙ Администратор <span id="adminBadge" class="count-badge" hidden></span></a>
         </div>
       </div>
-      <p class="sub">Документы, PDF, книги, DjVu, фото, таблицы, аудио, видео, архивы, чертежи КОМПАС и AutoCAD. Конвертация идёт прямо на вашем устройстве — файлы никуда не загружаются, работает и без интернета.</p>
+      <p class="sub">Документы, PDF, книги, DjVu, фото, таблицы, аудио, видео, архивы<span class="only-pc">, чертежи КОМПАС и AutoCAD</span>. Конвертация идёт прямо на вашем устройстве — файлы никуда не загружаются, работает и без интернета.</p>
     </header>
 
     <label id="drop" class="drop" tabindex="0">
@@ -79,15 +79,15 @@
       <h2>Что умеет</h2>
       <div class="formats-grid">
         <div><h3>Инструменты PDF</h3><p><b>Объединить</b> PDF и картинки, <b>разделить</b>, <b>удалить/повернуть/переставить</b> страницы, вставить <b>текст и подпись</b>, <b>скрыть данные</b> — с настоящим удалением из файла, а не закрашиванием</p></div>
-        <div><h3>КОМПАС-3D и AutoCAD</h3><p>Чертежи CDW, FRW → <b>PDF, DWG, DXF, PNG, JPG</b>; спецификации SPW → <b>PDF</b>; модели M3D, A3D → <b>STEP, STL, IGES, PNG, PDF</b>; DWG, DXF → <b>PDF, CDW, PNG</b>. Нужен установленный КОМПАС-3D.</p></div>
-        <div><h3>Резервные копии .BAK</h3><p>Копии КОМПАС и AutoCAD: формат определяется по содержимому, дальше — как обычный чертёж или модель</p></div>
+        <div class="only-pc"><h3>КОМПАС-3D и AutoCAD</h3><p>Чертежи CDW, FRW → <b>PDF, DWG, DXF, PNG, JPG</b>; спецификации SPW → <b>PDF</b>; модели M3D, A3D → <b>STEP, STL, IGES, PNG, PDF</b>; DWG, DXF → <b>PDF, CDW, PNG</b>. Нужен установленный КОМПАС-3D.</p></div>
+        <div class="only-pc"><h3>Резервные копии .BAK</h3><p>Копии КОМПАС и AutoCAD: формат определяется по содержимому, дальше — как обычный чертёж или модель</p></div>
         <div><h3>PDF и DjVu</h3><p>PDF → <b>DOCX, TXT, EPUB, FB2, PNG, JPG</b>; DjVu → <b>PDF, PNG, JPG, DOCX, TXT</b>. Сканы распознаются (русский и английский)</p></div>
         <div><h3>Электронные книги</h3><p>EPUB, FB2, MOBI, AZW, PRC → <b>PDF, DOCX, EPUB, FB2, TXT, HTML</b></p></div>
         <div><h3>Документы</h3><p>DOCX, TXT, Markdown, HTML (любая кодировка, в т.ч. старая Windows-1251) → <b>PDF, DOCX, EPUB, FB2, HTML, Markdown, TXT</b></p></div>
         <div><h3>Фото</h3><p>HEIC/HEIF с iPhone, PNG, JPG, WEBP, BMP, GIF, SVG, ICO, AVIF → <b>PNG, JPG, WEBP, PDF, BMP, ICO</b></p></div>
         <div><h3>Таблицы и данные</h3><p>CSV, TSV, JSON, XLSX, XLS, ODS, XML, YAML → <b>XLSX, CSV, TSV, JSON, YAML, XML, HTML, Markdown</b></p></div>
         <div><h3>Аудио и видео</h3><p>MP3, WAV, OGG, M4A, FLAC, MP4, WEBM, MOV → <b>MP3, WAV</b>; видео → <b>WEBM</b> (в реальном времени)</p></div>
-        <div><h3>Архивы и папки</h3><p>ZIP, RAR, 7Z, TAR, GZ и целые папки — распаковываются, всё внутри сразу готово к конвертации. Файлы без расширения определяются по содержимому</p></div>
+        <div><h3>Архивы и папки</h3><p>ZIP<span class="only-pc">, RAR, 7Z, TAR, GZ</span> и целые папки — распаковываются, всё внутри сразу готово к конвертации. Файлы без расширения определяются по содержимому</p></div>
       </div>
     </section>
   </main>
