@@ -2117,11 +2117,16 @@ function openDialog(title, html) {
   if (!dlg.open) dlg.showModal();
 }
 
+// значок «Поделиться» как в Safari на iPhone: квадрат, открытый сверху, со стрелкой вверх
+const IOS_SHARE_ICON = `<svg class="ios-share" viewBox="0 0 24 24" aria-label="Поделиться" role="img">
+  <path d="M8.5 9.5H6.75A1.75 1.75 0 0 0 5 11.25v8A1.75 1.75 0 0 0 6.75 21h10.5A1.75 1.75 0 0 0 19 19.25v-8a1.75 1.75 0 0 0-1.75-1.75H15.5"/>
+  <path d="M12 3v11.5M8.25 6.75 12 3l3.75 3.75"/></svg>`;
+
 function installHelpHtml() {
   if (isIOS) {
     return `<ol class="steps"><li>Откройте эту страницу в <b>Safari</b>.</li>
-      <li>Нажмите <b>«Поделиться»</b> <span class="kbd">⎋↑</span> внизу экрана.</li>
-      <li>Выберите <b>«На экран „Домой“»</b> → <b>«Добавить»</b>.</li></ol>
+      <li>Нажмите <b>«Поделиться»</b> ${IOS_SHARE_ICON} внизу экрана.</li>
+      <li>Выберите <b>На экран «Домой»</b> → <b>Добавить</b>.</li></ol>
       <p class="muted">На экране появится значок BullConvert с быком — он открывается как отдельное приложение.</p>`;
   }
   if (isAndroid) {
@@ -2197,7 +2202,7 @@ $('devicesBtn').onclick = async () => {
   $('devicesBody').innerHTML = `<p>Наведите камеру телефона на QR-код или введите адрес в браузере на устройстве <b>в той же сети Wi-Fi</b>:</p>
     <div class="qr-list">${blocks.join('')}</div>
     <h3>Значок на экран телефона</h3>
-    <p class="muted"><b>iPhone:</b> Safari → «Поделиться» → «На экран „Домой“». <b>Android:</b> Chrome → меню ⋮ → «Добавить на главный экран».</p>
+    <p class="muted"><b>iPhone:</b> Safari → «Поделиться» ${IOS_SHARE_ICON} → На экран «Домой». <b>Android:</b> Chrome → меню ⋮ → «Добавить на главный экран».</p>
     <p class="muted">Компьютер должен быть включён, а BullConvert — запущен (он стартует вместе с Windows).</p>`;
 };
 
