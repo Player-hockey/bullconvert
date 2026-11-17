@@ -21,8 +21,10 @@
       <div class="top-row">
         <h1 class="brand"><img src="bullconvert.svg" alt="" width="44" height="44"><span>Bull<span class="accent">Convert</span></span></h1>
         <div class="top-actions">
-          <button id="toolsBtn" class="btn ghost">🛠 Инструменты PDF</button>
+          <button id="toolsBtn" class="btn ghost">🛠 Инструменты</button>
+          <button id="historyBtn" class="btn ghost">🕘 История</button>
           <button id="installBtn" class="btn ghost" hidden>⤓ Установить приложение</button>
+          <button id="langBtn" class="btn ghost" title="English / Русский">EN</button>
           <button id="devicesBtn" class="btn ghost">📱 Другие устройства</button>
           <a id="adminBtn" class="btn ghost" href="admin.html" hidden>⚙ Администратор <span id="adminBadge" class="count-badge" hidden></span></a>
         </div>
@@ -47,6 +49,9 @@
         <label>Макс. ширина изображения, px
           <input id="maxWidth" type="number" min="1" placeholder="без изменений">
         </label>
+        <label>Фото не больше, КБ
+          <input id="maxKB" type="number" min="10" placeholder="без ограничения">
+        </label>
         <label>Битрейт MP3
           <select id="bitrate">
             <option value="128">128 кбит/с</option>
@@ -68,6 +73,7 @@
       <div class="toolbar-actions">
         <select id="bulkTarget" class="bulk" title="Выбрать один формат для всех подходящих файлов"></select>
         <button id="clearAll" class="btn ghost">Очистить</button>
+        <button id="zipSrc" class="btn ghost" title="Упаковать исходные файлы списка в один ZIP">🗜 Упаковать в ZIP</button>
         <button id="zipAll" class="btn ghost" disabled>Скачать всё (ZIP)</button>
         <button id="convertAll" class="btn primary">Конвертировать все</button>
       </div>
@@ -78,16 +84,19 @@
     <section class="formats">
       <h2>Что умеет</h2>
       <div class="formats-grid">
-        <div><h3>Инструменты PDF</h3><p><b>Объединить</b> PDF и картинки, <b>разделить</b>, <b>удалить/повернуть/переставить</b> страницы, вставить <b>текст и подпись</b>, <b>скрыть данные</b> — с настоящим удалением из файла, а не закрашиванием</p></div>
+        <div><h3>Инструменты PDF</h3><p><b>Объединить</b> и <b>разделить</b>, <b>удалить/повернуть/переставить</b> страницы, <b>сжать</b>, вставить <b>текст и подпись</b>, <b>номера страниц</b> и <b>водяной знак</b>, <b>пароль</b> (AES-256) — поставить и снять, <b>скрыть данные</b> с настоящим удалением из файла</p></div>
+        <div class="only-pc"><h3>Microsoft Office</h3><p>Старый Word (DOC) → <b>PDF, DOCX, RTF, ODT, TXT</b>; PowerPoint (PPT, PPTX) → точный <b>PDF</b> и слайды <b>JPG</b>. Через установленный Office.</p></div>
         <div class="only-pc"><h3>КОМПАС-3D и AutoCAD</h3><p>Чертежи CDW, FRW → <b>PDF, DWG, DXF, PNG, JPG</b>; спецификации SPW → <b>PDF</b>; модели M3D, A3D → <b>STEP, STL, IGES, PNG, PDF</b>; DWG, DXF → <b>PDF, CDW, PNG</b>. Нужен установленный КОМПАС-3D.</p></div>
         <div class="only-pc"><h3>Резервные копии .BAK</h3><p>Копии КОМПАС и AutoCAD: формат определяется по содержимому, дальше — как обычный чертёж или модель</p></div>
-        <div><h3>PDF и DjVu</h3><p>PDF → <b>DOCX, TXT, EPUB, FB2, PNG, JPG</b>; DjVu → <b>PDF, PNG, JPG, DOCX, TXT</b>. Сканы распознаются (русский и английский)</p></div>
+        <div><h3>PDF и DjVu</h3><p>PDF → <b>DOCX, Excel (таблицы), TXT, EPUB, FB2, PNG, JPG</b>; DjVu → <b>PDF, PNG, JPG, DOCX, TXT</b>. Сканы распознаются (русский и английский)</p></div>
         <div><h3>Электронные книги</h3><p>EPUB, FB2, MOBI, AZW, PRC → <b>PDF, DOCX, EPUB, FB2, TXT, HTML</b></p></div>
         <div><h3>Документы</h3><p>Word (DOCX), RTF, ODT, TXT, Markdown, HTML (любая кодировка, в т.ч. старая Windows-1251) → <b>PDF, DOCX, JPG, PNG, EPUB, FB2, HTML, Markdown, TXT</b>; презентации PowerPoint (PPTX) → <b>DOCX, TXT, HTML</b></p></div>
         <div><h3>Фото</h3><p>HEIC/HEIF с iPhone, TIFF (в т.ч. многостраничные сканы), PNG, JPG, WEBP, BMP, GIF, SVG, ICO, AVIF → <b>PNG, JPG, WEBP, PDF, GIF, TIFF, BMP, ICO</b></p></div>
+        <div><h3>Фоторедактор</h3><p><b>Обрезать, повернуть, отразить, изменить размер</b>, <b>сжать до нужного размера</b> («не больше 1 МБ»), <b>убрать фон</b> нейросетью, <b>склеить</b> несколько фото в одно</p></div>
         <div><h3>Фото → текст</h3><p>Распознавание текста со снимка или скриншота (русский и английский) → <b>TXT, DOCX</b></p></div>
         <div><h3>Таблицы и данные</h3><p>XLSX, XLS, ODS, CSV, TSV, JSON, XML, YAML → <b>PDF, XLSX, DOCX, CSV, TSV, JSON, YAML, XML, HTML, Markdown</b>. Широкие таблицы — на альбомный лист, XML-структура — деревом</p></div>
-        <div><h3>Аудио и видео</h3><p>MP3, WAV, OGG, M4A, FLAC, MP4, WEBM, MOV → <b>MP3, WAV</b>; видео → <b>MP4, WEBM</b> (в реальном времени) и <b>GIF</b></p></div>
+        <div><h3>Аудио и видео</h3><p>MP3, WAV, OGG, M4A, FLAC, MP4, WEBM, MOV → <b>MP3, WAV</b>; видео → <b>MP4, WEBM</b> (в реальном времени), <b>GIF</b> и <b>кадры JPG</b>. <b>Обрезка</b> по времени</p></div>
+        <div><h3>Удобство</h3><p><b>История</b> конвертаций на устройстве, <b>«Поделиться»</b> результатом с телефона, <b>упаковка в ZIP</b>, <b>английский</b> интерфейс (EN)</p></div>
         <div><h3>Архивы и папки</h3><p>ZIP<span class="only-pc">, RAR, 7Z, TAR, GZ</span> и целые папки — распаковываются, всё внутри сразу готово к конвертации. Файлы без расширения определяются по содержимому</p></div>
       </div>
     </section>
@@ -101,12 +110,16 @@
 
   <dialog id="toolsDlg" class="dlg tools-dlg">
     <form method="dialog" class="dlg-close"><button class="remove" aria-label="Закрыть">×</button></form>
-    <h2>Инструменты PDF</h2>
+    <h2>Инструменты</h2>
     <nav class="tabs">
-      <button class="tab active" data-tab="merge">Объединить</button>
+      <button class="tab active" data-tab="merge">Объединить PDF</button>
       <button class="tab" data-tab="pages">Страницы и разделение</button>
+      <button class="tab" data-tab="compress">Сжать PDF</button>
       <button class="tab" data-tab="edit">Текст и подпись</button>
+      <button class="tab" data-tab="stamp">Номера и водяной знак</button>
+      <button class="tab" data-tab="protect">Пароль</button>
       <button class="tab" data-tab="redact">Скрыть данные</button>
+      <button class="tab" data-tab="collage">Склеить фото</button>
     </nav>
     <div id="toolBody"></div>
   </dialog>
@@ -134,7 +147,56 @@
     </div>
   </dialog>
 
+  <dialog id="imgDlg" class="dlg img-dlg">
+    <form method="dialog" class="dlg-close"><button class="remove" aria-label="Закрыть">×</button></form>
+    <h2>✂ <span id="imgTitle"></span></h2>
+    <div class="edit-bar">
+      <button class="btn sm" id="imgRotL" title="Повернуть влево">⟲</button>
+      <button class="btn sm" id="imgRotR" title="Повернуть вправо">⟳</button>
+      <button class="btn sm" id="imgFlip" title="Отразить">⇋</button>
+      <button class="btn sm" id="imgCropReset">Сбросить обрезку</button>
+      <button class="btn sm" id="imgBg">✨ Убрать фон</button>
+      <label class="mini">Ширина, px <input type="number" id="imgW" min="16" placeholder="как есть"></label>
+      <label class="mini">Не больше, КБ <input type="number" id="imgKB" min="10" placeholder="без ограничения"></label>
+    </div>
+    <p class="muted small">Чтобы обрезать — выделите нужную область мышью или пальцем.</p>
+    <div class="img-wrap"><div class="img-stage" id="imgStage"><canvas id="imgCanvas"></canvas><div class="crop" id="imgCrop" hidden></div></div></div>
+    <div class="tool-actions">
+      <button class="btn primary" id="imgSave">Сохранить правки</button>
+      <button class="btn ghost" id="imgReset">Вернуть оригинал</button>
+      <span class="muted" id="imgInfo"></span>
+    </div>
+  </dialog>
+
+  <dialog id="mediaDlg" class="dlg">
+    <form method="dialog" class="dlg-close"><button class="remove" aria-label="Закрыть">×</button></form>
+    <h2>✂ <span id="mediaTitle"></span></h2>
+    <div id="mediaPlayer" class="media-player"></div>
+    <div class="trim-row">
+      <label class="mini">Начало <input id="trimStart" placeholder="0:00"></label>
+      <button class="btn sm" id="trimSetStart">⇤ текущий момент</button>
+      <label class="mini">Конец <input id="trimEnd" placeholder="до конца"></label>
+      <button class="btn sm" id="trimSetEnd">текущий момент ⇥</button>
+    </div>
+    <p class="muted small">Время в формате мин:сек, например 1:25 или 0:07.5. Обрезка применится при конвертации (MP3, WAV, MP4, WEBM, GIF, кадры).</p>
+    <div class="tool-actions">
+      <button class="btn primary" id="trimSave">Сохранить</button>
+      <button class="btn ghost" id="trimReset">Без обрезки</button>
+      <span class="tool-msg" id="trimMsg"></span>
+    </div>
+  </dialog>
+
+  <dialog id="historyDlg" class="dlg">
+    <form method="dialog" class="dlg-close"><button class="remove" aria-label="Закрыть">×</button></form>
+    <h2>🕘 История конвертаций</h2>
+    <p class="muted small">Хранится только на этом устройстве (последние 50 файлов).</p>
+    <div id="historyList"></div>
+    <div class="tool-actions"><button class="btn ghost" id="historyClear">Очистить историю</button></div>
+  </dialog>
+
+  <script src="i18n.js"></script>
   <script src="app.js"></script>
   <script src="pdftools.js"></script>
+  <script src="extras.js"></script>
 </body>
 </html>

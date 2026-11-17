@@ -46,7 +46,8 @@ async function embedCyrFont(pdfDoc) {
     if (!b64) throw new Error('Не найден шрифт для кириллицы.');
     cyrFontBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   }
-  return pdfDoc.embedFont(cyrFontBytes, { subset: true });
+  // шрифт целиком: «урезание» (subset) в @cantoo/pdf-lib с этим fontkit падает
+  return pdfDoc.embedFont(cyrFontBytes, { subset: false });
 }
 
 const dataUrlBytes = (u) => Uint8Array.from(atob(u.split(',')[1]), (c) => c.charCodeAt(0));
@@ -94,7 +95,7 @@ async function zipBlobs(files) {
 
 /* ============================ Окно инструментов ============================ */
 
-const T = { tab: 'merge', merge: [], pages: null, edit: null, redact: null };
+const T = { tab: 'merge', merge: [], pages: null, edit: null, redact: null, compress: null, stamp: null, protect: null, collage: [] };
 
 function openTools(tab = 'merge', file = null) {
   const dlg = $('toolsDlg');
@@ -106,7 +107,10 @@ function openTools(tab = 'merge', file = null) {
 function switchTab(tab) {
   T.tab = tab;
   document.querySelectorAll('#toolsDlg .tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-  ({ merge: renderMerge, pages: renderPages, edit: () => renderViewerTab('edit'), redact: () => renderViewerTab('redact') })[tab]();
+  ({
+    merge: renderMerge, pages: renderPages, edit: () => renderViewerTab('edit'), redact: () => renderViewerTab('redact'),
+    compress: renderCompress, stamp: renderStamp, protect: renderProtect, collage: renderCollage,
+  })[tab]();
 }
 
 function toolMsg(text, kind = '') {
@@ -130,7 +134,14 @@ function bindDrop(el, onFiles) {
 async function loadToolFile(tab, file) {
   try {
     if (tab === 'merge') { T.merge.push(file); renderMerge(); return; }
+    if (tab === 'collage') { T.collage.push(file); renderCollage(); return; }
     const bytes = await readBytes(file);
+    // эти вкладки работают с байтами PDF напрямую (в том числе с запароленными)
+    if (tab === 'compress' || tab === 'stamp' || tab === 'protect') {
+      T[tab] = { name: file.name, base: baseOf(file.name), bytes };
+      switchTab(tab);
+      return;
+    }
     toolMsg('Открываю PDF…');
     const doc = await openPdfJs(bytes);
     const st = { name: file.name, base: baseOf(file.name), bytes, doc, total: doc.numPages };
@@ -735,6 +746,309 @@ async function applyRedaction(st) {
     download({ blob: pdfBlob(bytes), name: `${st.base}_скрыто.pdf` });
     if (leaked.length) toolMsg(`⚠ В файле остались совпадения: ${leaked.join(', ')} (возможно, слово разбито в PDF на части). Отметьте их вручную и повторите.`, 'err');
     else toolMsg(`✓ Готово. Страницы со скрытием (${flattened.join(', ')}) пересобраны — скрытого текста в файле нет${(st.terms || []).length ? ', проверка поиском пройдена' : ''}. ${clean ? 'Метаданные, комментарии и вложения удалены.' : ''}`, 'ok');
+  } catch (e) { toolMsg(e.message, 'err'); }
+  finally { btn.disabled = false; }
+}
+
+/* ------------------------------------ Сжать PDF ------------------------------------ */
+
+function pdfFileTab(tab, intro, bodyHtml) {
+  const st = T[tab];
+  if (!st) {
+    $('toolBody').innerHTML = `<p class="muted">${intro}</p>
+      <div class="tool-drop" id="fDrop">${filePickerHtml('fPick', '.pdf,application/pdf', false, 'Открыть PDF')}</div><div class="tool-msg" id="toolMsg"></div>`;
+    $('fPick').onchange = (e) => e.target.files[0] && loadToolFile(tab, e.target.files[0]);
+    bindDrop($('fDrop'), (fs) => loadToolFile(tab, fs[0]));
+    return false;
+  }
+  $('toolBody').innerHTML = `<div class="tool-bar"><b class="t-name" title="${escapeHtml(st.name)}">${escapeHtml(st.name)}</b>
+      <span class="muted">${formatSize(st.bytes.length)}</span><span class="sp"></span><button class="btn sm ghost" id="fClose">Другой файл</button></div>
+    ${bodyHtml}<div class="tool-msg" id="toolMsg"></div>`;
+  $('fClose').onclick = () => { T[tab] = null; switchTab(tab); };
+  return true;
+}
+
+function renderCompress() {
+  if (!pdfFileTab('compress', 'Уменьшает размер PDF — для почты, госуслуг и мессенджеров. Обычный режим пережимает картинки внутри и <b>сохраняет текст</b>.', `
+    <div class="opt-grid">
+      <label class="radio"><input type="radio" name="cLevel" value="light"> <b>Слабое</b> — почти без потери качества</label>
+      <label class="radio"><input type="radio" name="cLevel" value="medium" checked> <b>Среднее</b> — рекомендуется</label>
+      <label class="radio"><input type="radio" name="cLevel" value="strong"> <b>Сильное</b> — максимум для картинок, текст сохраняется</label>
+      <label class="radio"><input type="radio" name="cLevel" value="raster"> <b>Предельное</b> — страницы становятся картинками (текст перестаёт выделяться); для сканов</label>
+    </div>
+    <div class="tool-actions"><button class="btn primary" id="cGo">Сжать и скачать</button></div>`)) return;
+  $('cGo').onclick = () => compressPdf(T.compress, document.querySelector('input[name=cLevel]:checked').value);
+}
+
+async function compressPdf(st, level) {
+  const btn = $('cGo');
+  btn.disabled = true;
+  try {
+    const before = st.bytes.length;
+    let out;
+    if (level === 'raster') {
+      const doc = await openPdfJs(st.bytes);
+      const pdf = await createImagePdf();
+      for (let p = 1; p <= doc.numPages; p++) {
+        toolMsg(`Страница ${p} из ${doc.numPages}…`);
+        const page = await doc.getPage(p);
+        const vp = page.getViewport({ scale: 1 });
+        const c = await renderPdfPage(page, vp.width * (110 / 72));
+        pdf.add(c, 0.55, vp.width);
+        c.width = c.height = 0;
+      }
+      out = new Uint8Array(await pdf.blob().arrayBuffer());
+    } else {
+      const L = { light: { q: 0.82, max: 2600 }, medium: { q: 0.68, max: 1900 }, strong: { q: 0.5, max: 1300 } }[level];
+      const { PDFName, PDFRawStream, PDFArray, PDFNumber } = await getPdfLib();
+      const pdf = await loadPdfLibDoc(st.bytes);
+      const N = (n) => PDFName.of(n);
+      const objs = pdf.context.enumerateIndirectObjects();
+      let done = 0, images = 0;
+      for (const [ref, obj] of objs) {
+        if (!(obj instanceof PDFRawStream) || obj.dict.get(N('Subtype')) !== N('Image')) continue;
+        const f = obj.dict.get(N('Filter'));
+        const isJpeg = f === N('DCTDecode') || (f instanceof PDFArray && f.size() === 1 && f.get(0) === N('DCTDecode'));
+        if (!isJpeg) continue;
+        images++;
+        let bmp;
+        try { bmp = await createImageBitmap(new Blob([obj.contents], { type: 'image/jpeg' })); } catch { continue; }
+        const k = Math.min(1, L.max / Math.max(bmp.width, bmp.height));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(bmp, 0, 0, c.width, c.height);
+        const jpg = dataUrlBytes(c.toDataURL('image/jpeg', L.q));
+        if (jpg.length >= obj.contents.length * 0.95) continue; // и так компактно
+        const dict = obj.dict;
+        dict.set(N('Width'), PDFNumber.of(c.width));
+        dict.set(N('Height'), PDFNumber.of(c.height));
+        dict.set(N('ColorSpace'), N('DeviceRGB'));
+        dict.set(N('BitsPerComponent'), PDFNumber.of(8));
+        dict.set(N('Filter'), N('DCTDecode'));
+        dict.delete(N('Decode'));
+        dict.delete(N('DecodeParms'));
+        pdf.context.assign(ref, PDFRawStream.of(dict, jpg));
+        done++;
+        toolMsg(`Картинок пережато: ${done}…`);
+      }
+      pdf.setProducer('BullConvert');
+      out = await pdf.save({ useObjectStreams: true });
+      if (!images) toolMsg('Картинок в PDF нет — сжимаю только структуру файла.');
+    }
+    if (out.length >= before) {
+      toolMsg(`Файл уже оптимален: сжатие не уменьшило его (${formatSize(before)}).${level !== 'raster' ? ' Для сканов попробуйте «Предельное».' : ''}`, 'err');
+      return;
+    }
+    download({ blob: pdfBlob(out), name: `${st.base}_сжатый.pdf` });
+    toolMsg(`Готово: ${formatSize(before)} → ${formatSize(out.length)} (−${Math.round((1 - out.length / before) * 100)}%)`, 'ok');
+  } catch (e) { toolMsg(e.message, 'err'); }
+  finally { btn.disabled = false; }
+}
+
+/* ------------------------------- Номера страниц и водяной знак ------------------------------- */
+
+function renderStamp() {
+  if (!pdfFileTab('stamp', 'Добавьте номера страниц и/или водяной знак — надпись («Копия», «Черновик», название компании) или картинку-логотип.', `
+    <div class="opt-cols">
+      <fieldset><legend><label><input type="checkbox" id="nOn" checked> Номера страниц</label></legend>
+        <label class="mini">Вид <select id="nFmt"><option value="{n}">1</option><option value="Стр. {n}">Стр. 1</option><option value="{n} / {total}">1 / 10</option><option value="Страница {n} из {total}">Страница 1 из 10</option></select></label>
+        <label class="mini">Место <select id="nPos"><option value="bc">внизу по центру</option><option value="br">внизу справа</option><option value="bl">внизу слева</option><option value="tc">вверху по центру</option><option value="tr">вверху справа</option></select></label>
+        <label class="mini">Начать с <input type="number" id="nStart" value="1" min="0"></label>
+        <label class="mini">Пропустить первых <input type="number" id="nSkip" value="0" min="0"> стр.</label>
+        <label class="mini">Размер <input type="number" id="nSize" value="10" min="6" max="40"></label>
+      </fieldset>
+      <fieldset><legend><label><input type="checkbox" id="wOn"> Водяной знак</label></legend>
+        <label class="mini">Текст <input id="wText" value="КОПИЯ"></label>
+        <label class="mini">Размер <input type="number" id="wSize" value="60" min="10" max="200"></label>
+        <label class="mini">Цвет <input type="color" id="wColor" value="#c92a2a"></label>
+        <label class="mini">Прозрачность <input type="range" id="wOpacity" min="5" max="80" value="20"></label>
+        <label class="mini">Наклон <select id="wAngle"><option value="45">по диагонали</option><option value="0">горизонтально</option></select></label>
+        <label class="mini">или картинка <input type="file" id="wImg" accept="image/*"></label>
+      </fieldset>
+    </div>
+    <div class="tool-actions"><button class="btn primary" id="sGo">Применить и скачать</button></div>`)) return;
+  $('sGo').onclick = () => stampPdf(T.stamp);
+}
+
+async function stampPdf(st) {
+  const btn = $('sGo');
+  btn.disabled = true;
+  try {
+    const { rgb, degrees } = await getPdfLib();
+    const pdf = await loadPdfLibDoc(st.bytes);
+    const font = await embedCyrFont(pdf);
+    const pages = pdf.getPages();
+    const total = pages.length;
+    const numOn = $('nOn').checked, wmOn = $('wOn').checked;
+    if (!numOn && !wmOn) throw new Error('Включите номера страниц или водяной знак.');
+    let wmImg = null;
+    const imgFile = $('wImg').files[0];
+    if (wmOn && imgFile) {
+      const im = await whiteToTransparent(await imageForPdf(imgFile));
+      wmImg = { img: await pdf.embedPng(dataUrlBytes(im.url)), w: im.w, h: im.h };
+    }
+    const fmt = $('nFmt').value, pos = $('nPos').value, start = +$('nStart').value || 1, skip = +$('nSkip').value || 0, nSize = +$('nSize').value || 10;
+    const wText = $('wText').value.trim(), wSize = +$('wSize').value || 60, wOpacity = (+$('wOpacity').value || 20) / 100, wAngle = +$('wAngle').value;
+    const [wr, wg, wb] = hexToRgb($('wColor').value);
+    pages.forEach((page, i) => {
+      const { width, height } = page.getSize();
+      if (numOn && i >= skip) {
+        const n = start + i - skip;
+        const t = fmt.replace('{n}', n).replace('{total}', start + total - skip - 1);
+        const tw = font.widthOfTextAtSize(t, nSize);
+        const x = pos.endsWith('c') ? (width - tw) / 2 : pos.endsWith('r') ? width - tw - 36 : 36;
+        const y = pos.startsWith('b') ? 22 : height - 22 - nSize;
+        page.drawText(t, { x, y, size: nSize, font, color: rgb(0.25, 0.25, 0.25) });
+      }
+      if (wmOn) {
+        if (wmImg) {
+          const k = Math.min(width * 0.6 / wmImg.w, height * 0.6 / wmImg.h);
+          const w = wmImg.w * k, h = wmImg.h * k;
+          page.drawImage(wmImg.img, { x: (width - w) / 2, y: (height - h) / 2, width: w, height: h, opacity: wOpacity });
+        } else if (wText) {
+          const tw = font.widthOfTextAtSize(wText, wSize);
+          const a = wAngle * Math.PI / 180;
+          // центр надписи — в центре страницы (с учётом поворота)
+          const x = width / 2 - (tw / 2) * Math.cos(a) + (wSize / 3) * Math.sin(a);
+          const y = height / 2 - (tw / 2) * Math.sin(a) - (wSize / 3) * Math.cos(a);
+          page.drawText(wText, { x, y, size: wSize, font, color: rgb(wr, wg, wb), opacity: wOpacity, rotate: degrees(wAngle) });
+        }
+      }
+    });
+    pdf.setProducer('BullConvert');
+    const blob = pdfBlob(await pdf.save());
+    download({ blob, name: `${st.base}_${wmOn ? 'знак' : 'номера'}.pdf` });
+    toolMsg(`Готово: ${total} стр., ${formatSize(blob.size)}`, 'ok');
+  } catch (e) { toolMsg(e.message, 'err'); }
+  finally { btn.disabled = false; }
+}
+
+/* ------------------------------------ Пароль на PDF ------------------------------------ */
+
+function renderProtect() {
+  if (!pdfFileTab('protect', 'Поставьте пароль на открытие PDF (шифрование AES-256) или снимите пароль, если вы его знаете.', `
+    <div class="opt-cols">
+      <fieldset><legend>Поставить пароль</legend>
+        <label class="mini">Пароль <input type="password" id="pNew" autocomplete="new-password"></label>
+        <label class="mini">Ещё раз <input type="password" id="pNew2" autocomplete="new-password"></label>
+        <label class="chk"><input type="checkbox" id="pNoPrint"> запретить печать</label>
+        <label class="chk"><input type="checkbox" id="pNoCopy"> запретить копирование текста</label>
+        <button class="btn primary" id="pSet">Зашифровать и скачать</button>
+      </fieldset>
+      <fieldset><legend>Снять пароль</legend>
+        <label class="mini">Текущий пароль <input type="password" id="pOld" autocomplete="current-password"></label>
+        <button class="btn" id="pRemove">Снять пароль и скачать</button>
+      </fieldset>
+    </div>`)) return;
+  const st = T.protect;
+  $('pSet').onclick = async () => {
+    try {
+      const pw = $('pNew').value;
+      if (!pw) throw new Error('Введите пароль.');
+      if (pw !== $('pNew2').value) throw new Error('Пароли не совпадают.');
+      const pdf = await loadPdfLibDoc(st.bytes);
+      pdf.encrypt({
+        userPassword: pw,
+        ownerPassword: pw + ':' + (crypto.randomUUID ? crypto.randomUUID() : Date.now()),
+        permissions: { printing: $('pNoPrint').checked ? undefined : 'highResolution', copying: !$('pNoCopy').checked, modifying: false, annotating: true, fillingForms: true, contentAccessibility: true, documentAssembly: false },
+      });
+      const blob = pdfBlob(await pdf.save());
+      download({ blob, name: `${st.base}_защищён.pdf` });
+      $('pNew').value = $('pNew2').value = '';
+      toolMsg('Готово: PDF зашифрован (AES-256). Без пароля его не открыть — не забудьте пароль.', 'ok');
+    } catch (e) { toolMsg(e.message, 'err'); }
+  };
+  $('pRemove').onclick = async () => {
+    try {
+      const { PDFDocument } = await getPdfLib();
+      let pdf;
+      try { pdf = await PDFDocument.load(st.bytes, { password: $('pOld').value }); }
+      catch { throw new Error('Неверный пароль (или файл повреждён).'); }
+      const blob = pdfBlob(await pdf.save());
+      download({ blob, name: `${st.base}_без_пароля.pdf` });
+      $('pOld').value = '';
+      toolMsg('Готово: пароль снят.', 'ok');
+    } catch (e) { toolMsg(e.message, 'err'); }
+  };
+}
+
+/* ------------------------------------ Склеить фото ------------------------------------ */
+
+function renderCollage() {
+  const body = $('toolBody');
+  const rows = T.collage.map((f, i) => `<li class="m-row"><span class="badge image">${escapeHtml(extOf(f.name) || '?')}</span>
+      <span class="m-name">${escapeHtml(f.name)}</span><span class="m-btns">
+      <button class="btn sm" data-a="up" data-i="${i}" ${i ? '' : 'disabled'}>↑</button>
+      <button class="btn sm" data-a="down" data-i="${i}" ${i < T.collage.length - 1 ? '' : 'disabled'}>↓</button>
+      <button class="btn sm ghost" data-a="del" data-i="${i}">✕</button></span></li>`).join('');
+  body.innerHTML = `<p class="muted">Склейте несколько фото или скриншотов в одну картинку: столбиком, в ряд или сеткой.</p>
+    <div class="tool-drop" id="cgDrop">${filePickerHtml('cgPick', 'image/*,.heic,.heif,.tif,.tiff', true, '+ Добавить фото')}</div>
+    <ol class="m-list">${rows}</ol>
+    <div class="opt-row">
+      <label class="mini">Как <select id="cgLayout"><option value="v">столбиком</option><option value="h">в ряд</option><option value="g">сеткой</option></select></label>
+      <label class="mini">Колонок <input type="number" id="cgCols" value="2" min="2" max="8"></label>
+      <label class="mini">Отступ, px <input type="number" id="cgGap" value="10" min="0" max="100"></label>
+      <label class="mini">Фон <input type="color" id="cgBg" value="#ffffff"></label>
+      <label class="mini">Формат <select id="cgFmt"><option value="jpg">JPG</option><option value="png">PNG</option></select></label>
+    </div>
+    <div class="tool-actions"><button class="btn primary" id="cgGo" ${T.collage.length > 1 ? '' : 'disabled'}>Склеить и скачать</button>
+      <button class="btn ghost" id="cgClear" ${T.collage.length ? '' : 'disabled'}>Очистить</button></div>
+    <div class="tool-msg" id="toolMsg"></div>`;
+  $('cgPick').onchange = (e) => { T.collage.push(...e.target.files); renderCollage(); };
+  bindDrop($('cgDrop'), (fs) => { T.collage.push(...fs); renderCollage(); });
+  $('cgClear').onclick = () => { T.collage = []; renderCollage(); };
+  body.querySelectorAll('.m-btns button').forEach((b) => b.onclick = () => {
+    const i = +b.dataset.i, m = T.collage;
+    if (b.dataset.a === 'del') m.splice(i, 1);
+    else { const j = b.dataset.a === 'up' ? i - 1 : i + 1; [m[i], m[j]] = [m[j], m[i]]; }
+    renderCollage();
+  });
+  $('cgGo').onclick = makeCollage;
+}
+
+async function makeCollage() {
+  const btn = $('cgGo');
+  btn.disabled = true;
+  try {
+    const layout = $('cgLayout').value, gap = +$('cgGap').value || 0, bg = $('cgBg').value, fmt = $('cgFmt').value;
+    const cols = layout === 'g' ? Math.max(2, +$('cgCols').value || 2) : layout === 'h' ? T.collage.length : 1;
+    const imgs = [];
+    for (const f of T.collage) {
+      toolMsg(`Загружаю ${imgs.length + 1} из ${T.collage.length}…`);
+      const { img, url } = await loadImage(await imageSource(f, extOf(f.name)));
+      imgs.push({ img, url, w: img.naturalWidth, h: img.naturalHeight });
+    }
+    // ширина ячейки (столбик/сетка) или высота ряда (в ряд) — по самому маленькому снимку, но не больше 1600/800 px
+    let W, H, cells = [];
+    if (layout === 'h') {
+      const rowH = Math.min(1200, Math.min(...imgs.map((i) => i.h)));
+      let x = gap;
+      for (const i of imgs) { const w = Math.round(i.w * rowH / i.h); cells.push({ i, x, y: gap, w, h: rowH }); x += w + gap; }
+      W = x; H = rowH + gap * 2;
+    } else {
+      const cellW = Math.min(layout === 'v' ? 1600 : 800, Math.min(...imgs.map((i) => i.w)));
+      let y = gap;
+      for (let r = 0; r < imgs.length; r += cols) {
+        const row = imgs.slice(r, r + cols).map((i) => ({ i, w: cellW, h: Math.round(i.h * cellW / i.w) }));
+        const rowH = Math.max(...row.map((c) => c.h));
+        row.forEach((c, k) => cells.push({ ...c, x: gap + k * (cellW + gap), y: y + Math.round((rowH - c.h) / 2) }));
+        y += rowH + gap;
+      }
+      W = gap + cols * (cellW + gap); H = y;
+    }
+    if (W * H > 60e6) throw new Error('Слишком большая картинка получается — уменьшите число фото или выберите «сеткой».');
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    ctx.imageSmoothingQuality = 'high';
+    for (const cell of cells) ctx.drawImage(cell.i.img, cell.x, cell.y, cell.w, cell.h);
+    imgs.forEach((i) => URL.revokeObjectURL(i.url));
+    const blob = await canvasToBlob(c, MIME[fmt], 0.9);
+    download({ blob, name: `коллаж.${fmt}` });
+    toolMsg(`Готово: ${W}×${H} px, ${formatSize(blob.size)}`, 'ok');
   } catch (e) { toolMsg(e.message, 'err'); }
   finally { btn.disabled = false; }
 }

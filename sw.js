@@ -1,11 +1,11 @@
 // BullConvert service worker: приложение открывается без сети,
 // а библиотеки с CDN после первого использования берутся из кэша.
-const VERSION = 'bc-v6';
+const VERSION = 'bc-v7';
 const SHELL = `${VERSION}-shell`;
 const LIBS = `${VERSION}-libs`;
 const SHELL_FILES = [
   './', 'index.html', 'app.js', 'style.css', 'manifest.webmanifest',
-  'bullconvert.svg', 'bullconvert.ico', 'icon-192.png', 'icon-512.png', 'access.html', 'pdftools.js',
+  'bullconvert.svg', 'bullconvert.ico', 'icon-192.png', 'icon-512.png', 'access.html', 'pdftools.js', 'extras.js', 'i18n.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -42,7 +42,8 @@ self.addEventListener('fetch', (e) => {
   }
 
   // Библиотеки с CDN: версии зафиксированы — кэш, иначе сеть
-  if (/(^|\.)(jsdelivr\.net|djvu\.js\.org)$/.test(url.hostname)) {
+  // staticimgly.com — модель нейросети для удаления фона
+  if (/(^|\.)(jsdelivr\.net|djvu\.js\.org|staticimgly\.com)$/.test(url.hostname)) {
     e.respondWith((async () => {
       const cached = await caches.match(req);
       if (cached) return cached;

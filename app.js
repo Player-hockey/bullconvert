@@ -26,7 +26,8 @@ const CDN = {
   heic2any:    'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js',
   djvu:        'https://djvu.js.org/assets/dist/djvu.js',
   qrcode:      'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js',
-  pdflib:      'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js',
+  // @cantoo/pdf-lib — совместимая версия pdf-lib с поддержкой паролей (AES-256)
+  pdflib:      'https://cdn.jsdelivr.net/npm/@cantoo/pdf-lib@2.9.2/dist/pdf-lib.min.js',
   fontkit:     'https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js',
   pako:        'https://cdn.jsdelivr.net/npm/pako@1.0.11/dist/pako.min.js',
   utif:        'https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js',
@@ -66,6 +67,7 @@ const CATEGORIES = {
   doc:     { label: 'Док',     in: ['txt', 'md', 'markdown', 'html', 'htm', 'docx', 'rtf', 'odt', 'pptx', 'pdf', 'djvu', 'djv', 'epub', 'fb2', 'mobi', 'azw', 'azw3', 'prc'] },
   media:   { label: 'Медиа',   in: ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'webm', 'mp4', 'mov', 'mkv'] },
   cad:     { label: 'CAD',     in: [...CAD_2D, ...CAD_SPEC, ...CAD_ACAD, ...CAD_3D] },
+  office:  { label: 'Office',  in: ['doc', 'dot', 'ppt', 'pps', 'ppsx'] },
   archive: { label: 'Архив',   in: ARCHIVES },
 };
 
@@ -81,15 +83,16 @@ function targetsFor(cat, ext) {
   const not = (list) => list.filter((t) => t !== canon(ext));
   switch (cat) {
     // txt/docx у фото — распознавание текста со снимка
-    case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'gif', 'tiff', 'bmp', 'ico', 'txt', 'docx']);
+    case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'nobg', 'gif', 'tiff', 'bmp', 'ico', 'txt', 'docx']);
     case 'data':  return not(['pdf', 'xlsx', 'docx', 'csv', 'tsv', 'json', 'yaml', 'xml', 'html', 'md']);
     case 'doc':
-      if (ext === 'pdf') return ['docx', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
+      if (ext === 'pdf') return ['docx', 'xlsx', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
       if (canon(ext) === 'djvu') return ['pdf', 'png', 'jpg', 'docx', 'txt', 'md', 'html', 'epub', 'fb2'];
-      if (ext === 'pptx') return ['docx', 'txt', 'md', 'html']; // текст и картинки слайдов
+      // текст и картинки слайдов; на компьютере владельца с PowerPoint — ещё и точный PDF/JPG
+      if (ext === 'pptx') return [...(pcFeatures && officeAvailable ? ['pdf', 'jpg'] : []), 'docx', 'txt', 'md', 'html'];
       return not(['pdf', 'docx', 'png', 'jpg', 'epub', 'fb2', 'html', 'md', 'txt']);
     case 'media':
-      if (VIDEO_EXT.includes(ext)) return not([...(recordable(MP4_TYPES) ? ['mp4'] : []), 'webm', 'gif', 'mp3', 'wav']);
+      if (VIDEO_EXT.includes(ext)) return not([...(recordable(MP4_TYPES) ? ['mp4'] : []), 'webm', 'gif', 'mp3', 'wav', 'frames']);
       return not(['mp3', 'wav']);
     case 'cad':
       if (CAD_2D.includes(ext)) return ['pdf', 'dwg', 'dxf', 'png', 'jpg'];
@@ -98,9 +101,20 @@ function targetsFor(cat, ext) {
       if (ext === 'dxf') return ['pdf', 'dwg', 'cdw', 'png', 'jpg'];
       if (CAD_3D.includes(ext)) return ['step', 'stl', 'igs', 'png', 'jpg', 'pdf'];
       return [];
+    // старые форматы Office — через установленный Word/PowerPoint на компьютере владельца
+    case 'office':
+      if (['ppt', 'pps', 'ppsx'].includes(ext)) return ['pdf', 'pptx', 'jpg'];
+      return ['pdf', 'docx', 'rtf', 'odt', 'txt'];
     default: return [];
   }
 }
+
+// Понятные названия особых вариантов в списке форматов
+const TARGET_LABELS = {
+  nobg: 'PNG без фона',
+  frames: 'Кадры JPG (ZIP)',
+};
+const targetLabel = (t) => TARGET_LABELS[t] || t.toUpperCase();
 
 const MIME = {
   png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', bmp: 'image/bmp', ico: 'image/x-icon',
@@ -122,9 +136,11 @@ const baseOf = (name) => (name.includes('.') ? name.slice(0, name.lastIndexOf('.
 // Пока BullConvert открыт не на нём (публичный сайт, телефон, другой компьютер),
 // эти форматы считаются неподдерживаемыми и нигде не упоминаются.
 let pcFeatures = false;
+let officeAvailable = false; // на компьютере владельца установлен Microsoft Office
 const catOf = (ext) => {
   const c = Object.keys(CATEGORIES).find((k) => CATEGORIES[k].in.includes(ext)) || null;
   if (!pcFeatures && (c === 'cad' || (c === 'archive' && ext !== 'zip'))) return null;
+  if (c === 'office' && !(pcFeatures && officeAvailable)) return null;
   return c;
 };
 
@@ -164,11 +180,47 @@ const readText = async (file) => decodeText(new Uint8Array(await file.arrayBuffe
 
 function getOptions() {
   const mw = parseInt(document.getElementById('maxWidth').value, 10);
+  const kb = parseInt(document.getElementById('maxKB').value, 10);
   return {
     quality: parseInt(document.getElementById('quality').value, 10) / 100,
     maxWidth: mw > 0 ? mw : null,
+    maxKB: kb > 0 ? kb : null,
     bitrate: parseInt(document.getElementById('bitrate').value, 10),
   };
+}
+
+/**
+ * Сохранить холст не больше maxKB: подбор качества JPEG/WEBP двоичным поиском,
+ * а если не хватает — постепенное уменьшение размеров (для PNG — только уменьшение).
+ */
+async function canvasToBlobMax(canvas, type, quality, maxKB) {
+  if (!maxKB) return canvasToBlob(canvas, type, quality);
+  const max = maxKB * 1024;
+  let c = canvas;
+  for (let step = 0; step < 12; step++) {
+    if (type === 'image/png') {
+      const b = await canvasToBlob(c, type);
+      if (b.size <= max) return b;
+    } else {
+      let lo = 0.3, hi = Math.min(0.95, quality || 0.92), best = null;
+      const top = await canvasToBlob(c, type, hi);
+      if (top.size <= max) return top;
+      for (let i = 0; i < 7; i++) {
+        const q = (lo + hi) / 2;
+        const b = await canvasToBlob(c, type, q);
+        if (b.size <= max) { best = b; lo = q; } else hi = q;
+      }
+      if (best) return best;
+    }
+    if (c.width < 64 || c.height < 64) break;
+    const s = document.createElement('canvas');
+    s.width = Math.round(c.width * 0.8); s.height = Math.round(c.height * 0.8);
+    const ctx = s.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(c, 0, 0, s.width, s.height);
+    c = s;
+  }
+  return canvasToBlob(c, type, 0.3);
 }
 
 /* ================== Определение формата по содержимому ================== */
@@ -360,7 +412,12 @@ async function convertImage(file, ext, target, opts, onProgress = () => {}, onSt
       pdf.add(canvas, opts.quality);
       return pdf.blob();
     }
-    return canvasToBlob(canvas, MIME[target], opts.quality);
+    // фото без фона: нейросеть прямо в браузере (модель скачивается один раз)
+    if (target === 'nobg') {
+      const blob = await removeBackground(await canvasToBlob(canvas, 'image/png'), onStatus, onProgress);
+      return { blob, ext: 'png', note: 'фон удалён' };
+    }
+    return canvasToBlobMax(canvas, MIME[target], opts.quality, opts.maxKB);
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -915,6 +972,70 @@ async function pagesToPdf(file, ext, opts, onProgress, onStatus) {
     await tick();
   }
   return pdf.blob();
+}
+
+/**
+ * PDF → Excel: таблицы восстанавливаются по положению текста на странице —
+ * строки по вертикали, колонки по общим левым краям. Каждая страница — отдельный лист.
+ */
+async function pdfToXlsx(file, onProgress, onStatus) {
+  const pdfjs = await getPdfJs();
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  await loadLib('xlsx');
+  const wb = XLSX.utils.book_new();
+  const toCell = (s) => {
+    const t = s.replace(/ /g, ' ').trim();
+    // «1 200,50» / «-15.5» / «12%» → число, чтобы в Excel можно было считать
+    if (/^-?\d{1,3}([  ]\d{3})*([.,]\d+)?$|^-?\d+([.,]\d+)?$/.test(t)) return Number(t.replace(/[  ]/g, '').replace(',', '.'));
+    return t;
+  };
+  let anyText = false;
+  for (let p = 1; p <= pdf.numPages; p++) {
+    onStatus(`Таблицы: страница ${p} из ${pdf.numPages}…`);
+    const page = await pdf.getPage(p);
+    const vp = page.getViewport({ scale: 1 });
+    const items = (await page.getTextContent()).items
+      .filter((it) => it.str && it.str.trim())
+      .map((it) => {
+        const tx = pdfjs.Util.transform(vp.transform, it.transform);
+        const h = Math.hypot(tx[2], tx[3]) || 10;
+        return { s: it.str, x: tx[4], y: tx[5], w: (it.width || it.str.length * h * 0.5) * vp.scale, h };
+      });
+    if (!items.length) continue;
+    anyText = true;
+    // строки: элементы с близкой базовой линией
+    items.sort((a, b) => a.y - b.y || a.x - b.x);
+    const lines = [];
+    for (const it of items) {
+      const line = lines[lines.length - 1];
+      if (line && Math.abs(line.y - it.y) < Math.min(line.h, it.h) * 0.5) line.items.push(it);
+      else lines.push({ y: it.y, h: it.h, items: [it] });
+    }
+    // ячейки: внутри строки склеиваем соседние куски, если промежуток меньше ~1 символа
+    const rows = lines.map((l) => {
+      const cells = [];
+      for (const it of l.items.sort((a, b) => a.x - b.x)) {
+        const last = cells[cells.length - 1];
+        if (last && it.x - (last.x + last.w) < it.h * 0.9) { last.s += (it.x - (last.x + last.w) > it.h * 0.15 ? ' ' : '') + it.s; last.w = it.x + it.w - last.x; }
+        else cells.push({ ...it });
+      }
+      return cells;
+    });
+    // колонки: кластеризуем левые края ячеек всех строк
+    const xs = rows.flat().map((c) => c.x).sort((a, b) => a - b);
+    const cols = [];
+    for (const x of xs) { if (!cols.length || x - cols[cols.length - 1].max > 12) cols.push({ min: x, max: x }); else cols[cols.length - 1].max = x; }
+    const colOf = (x) => { let best = 0, d = Infinity; cols.forEach((c, i) => { const dd = x < c.min ? c.min - x : x > c.max ? x - c.max : 0; if (dd < d) { d = dd; best = i; } }); return best; };
+    const aoa = rows.map((cells) => {
+      const r = new Array(cols.length).fill('');
+      for (const c of cells) { const i = colOf(c.x); r[i] = r[i] === '' ? toCell(c.s) : `${r[i]} ${c.s}`; }
+      return r;
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), `Стр. ${p}`);
+    onProgress(p / pdf.numPages);
+  }
+  if (!anyText) throw new Error('В PDF нет текстового слоя (это скан) — сначала распознайте его: PDF → DOCX/TXT.');
+  return { blob: new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: MIME.xlsx }), ext: 'xlsx', note: `${wb.SheetNames.length} лист(ов)` };
 }
 
 /** Текст всех страниц; страницы без текстового слоя (сканы) распознаются OCR. */
@@ -1884,6 +2005,7 @@ async function convertDoc(file, ext, target, opts, onProgress, onStatus, htmlOve
   const c = canon(ext);
   const title = baseOf(file.name);
   if ((c === 'pdf' || c === 'djvu') && (target === 'png' || target === 'jpg')) return pagesToImages(file, c, target, opts, onProgress, onStatus);
+  if (c === 'pdf' && target === 'xlsx') return pdfToXlsx(file, onProgress, onStatus);
   if (c === 'djvu' && target === 'pdf' && !htmlOverride) return pagesToPdf(file, c, opts, onProgress, onStatus);
 
   // htmlOverride — текст, отредактированный пользователем в конвертере
@@ -1991,7 +2113,7 @@ async function encodeMP3(buf, kbps, onProgress) {
 }
 
 /** Перекодирование видео (WEBM или MP4) записью воспроизведения — идёт в реальном времени */
-async function recordVideo(file, target, onProgress) {
+async function recordVideo(file, target, onProgress, trim) {
   if (!window.MediaRecorder) throw new Error('Этот браузер не поддерживает запись видео.');
   const mime = recordable(target === 'mp4' ? MP4_TYPES : WEBM_TYPES);
   if (!mime) throw new Error(`Этот браузер не умеет сохранять видео в ${target.toUpperCase()}${target === 'mp4' ? ' — выберите WEBM или откройте сайт в Chrome/Edge/Safari' : ''}.`);
@@ -2013,7 +2135,8 @@ async function recordVideo(file, target, onProgress) {
 
     await video.play();
     video.pause();
-    video.currentTime = 0;
+    const from = trim ? trim.start : 0;
+    video.currentTime = from;
     await new Promise((r) => { video.onseeked = r; });
 
     const stream = new MediaStream([...cap.getVideoTracks(), ...dest.stream.getAudioTracks()]);
@@ -2022,8 +2145,13 @@ async function recordVideo(file, target, onProgress) {
     rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     const done = new Promise((r) => { rec.onstop = r; });
 
-    video.ontimeupdate = () => isFinite(video.duration) && onProgress(video.currentTime / video.duration);
-    video.onended = () => rec.state !== 'inactive' && rec.stop();
+    const stop = () => { video.pause(); if (rec.state !== 'inactive') rec.stop(); };
+    video.ontimeupdate = () => {
+      const end = trim && trim.end ? trim.end : video.duration;
+      if (isFinite(end)) onProgress((video.currentTime - from) / Math.max(0.1, end - from));
+      if (trim && trim.end && video.currentTime >= trim.end) stop();
+    };
+    video.onended = stop;
     rec.start(1000);
     await video.play();
     await done;
@@ -2035,56 +2163,103 @@ async function recordVideo(file, target, onProgress) {
   }
 }
 
-/** Видео → анимированный GIF: 10 кадров/с, ширина до 480 px, первые 30 секунд */
-async function videoToGif(file, onProgress, onStatus) {
+/** Открыть видео для покадрового чтения; узнаёт длительность даже у WEBM без неё */
+async function openVideo(file) {
   const url = URL.createObjectURL(file);
   const video = document.createElement('video');
   video.muted = true;
   video.playsInline = true;
   video.preload = 'auto';
   video.src = url;
+  await new Promise((res, rej) => {
+    video.onloadeddata = res;
+    video.onerror = () => rej(new Error('Браузер не может открыть это видео (кодек не поддерживается).'));
+  });
+  // у WEBM, записанных браузером, длительность неизвестна (Infinity) — узнаём её перемоткой в самый конец
+  if (!isFinite(video.duration)) {
+    video.currentTime = 1e7;
+    await new Promise((r) => { video.onseeked = r; setTimeout(r, 3000); });
+    video.currentTime = 0;
+    await new Promise((r) => { video.onseeked = r; setTimeout(r, 3000); });
+  }
+  const dur = isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+  const seek = (t) => new Promise((r) => { video.onseeked = r; video.currentTime = Math.min(t, Math.max(0, dur - 0.01)); });
+  return { video, dur, seek, close: () => URL.revokeObjectURL(url) };
+}
+
+/** Видео → анимированный GIF: 10 кадров/с, ширина до 480 px, не длиннее 30 секунд */
+async function videoToGif(file, onProgress, onStatus, trim) {
+  const v = await openVideo(file);
   try {
-    await new Promise((res, rej) => {
-      video.onloadeddata = res;
-      video.onerror = () => rej(new Error('Браузер не может открыть это видео (кодек не поддерживается).'));
-    });
     const MAX_SEC = 30, FPS = 10;
-    // у WEBM, записанных браузером, длительность неизвестна (Infinity) — узнаём её перемоткой в самый конец
-    if (!isFinite(video.duration)) {
-      video.currentTime = 1e7;
-      await new Promise((r) => { video.onseeked = r; setTimeout(r, 3000); });
-      video.currentTime = 0;
-      await new Promise((r) => { video.onseeked = r; setTimeout(r, 3000); });
-    }
-    const dur = isFinite(video.duration) && video.duration > 0 ? video.duration : MAX_SEC;
-    const len = Math.min(dur, MAX_SEC);
-    const k = Math.min(1, 480 / (video.videoWidth || 480));
-    const w = Math.max(2, Math.round((video.videoWidth || 480) * k)), h = Math.max(2, Math.round((video.videoHeight || 270) * k));
+    const from = trim ? trim.start : 0;
+    const to = Math.min(trim && trim.end ? trim.end : (v.dur || MAX_SEC), from + MAX_SEC);
+    const k = Math.min(1, 480 / (v.video.videoWidth || 480));
+    const w = Math.max(2, Math.round((v.video.videoWidth || 480) * k)), h = Math.max(2, Math.round((v.video.videoHeight || 270) * k));
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const ctx = c.getContext('2d', { willReadFrequently: true });
     const frames = [];
-    const total = Math.max(1, Math.floor(len * FPS));
+    const total = Math.max(1, Math.floor((to - from) * FPS));
     for (let f = 0; f < total; f++) {
-      video.currentTime = Math.min(f / FPS, dur - 0.01);
-      await new Promise((r) => { video.onseeked = r; });
-      ctx.drawImage(video, 0, 0, w, h);
+      await v.seek(from + f / FPS);
+      ctx.drawImage(v.video, 0, 0, w, h);
       frames.push(ctx.getImageData(0, 0, w, h));
       onStatus(`Кадр ${f + 1} из ${total}…`);
       onProgress((f + 1) / total * 0.85);
     }
     onStatus('Сборка GIF…');
     const blob = await encodeGIF(frames, w, h, 100 / FPS);
-    return { blob, ext: 'gif', note: dur > MAX_SEC ? `первые ${MAX_SEC} с из ${Math.round(dur)} с` : '' };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+    const cut = (trim && trim.end ? trim.end : v.dur) - from > MAX_SEC;
+    return { blob, ext: 'gif', note: cut ? `${MAX_SEC} с (GIF длиннее не бывает разумного размера)` : '' };
+  } finally { v.close(); }
+}
+
+/** Видео → кадры JPG в ZIP: по кадру в секунду (для коротких — чаще), не больше 300 кадров */
+async function videoFrames(file, onProgress, onStatus, opts) {
+  const v = await openVideo(file);
+  try {
+    const trim = opts.trim;
+    const from = trim ? trim.start : 0;
+    const to = trim && trim.end ? trim.end : v.dur;
+    if (!(to > from)) throw new Error('Не удалось определить длительность видео.');
+    const step = to - from <= 10 ? 0.5 : 1;
+    const total = Math.min(300, Math.floor((to - from) / step) + 1);
+    const c = document.createElement('canvas');
+    c.width = v.video.videoWidth; c.height = v.video.videoHeight;
+    const ctx = c.getContext('2d');
+    await loadLib('jszip');
+    const zip = new JSZip();
+    const base = baseOf(file.name);
+    for (let f = 0; f < total; f++) {
+      const t = from + f * step;
+      await v.seek(t);
+      ctx.drawImage(v.video, 0, 0, c.width, c.height);
+      const mm = String(Math.floor(t / 60)).padStart(2, '0'), ss = (t % 60).toFixed(1).padStart(4, '0').replace('.', ',');
+      zip.file(`${base}_${mm}-${ss}.jpg`, await canvasToBlob(c, 'image/jpeg', opts.quality || 0.9));
+      onStatus(`Кадр ${f + 1} из ${total}…`);
+      onProgress((f + 1) / total * 0.9);
+    }
+    return { blob: await zip.generateAsync({ type: 'blob' }), ext: 'zip', note: `${total} кадров` };
+  } finally { v.close(); }
+}
+
+/** Вырезать фрагмент звука [start, end) секунд */
+function sliceAudio(buf, start, end) {
+  const a = Math.max(0, Math.floor(start * buf.sampleRate));
+  const b = Math.min(buf.length, end ? Math.floor(end * buf.sampleRate) : buf.length);
+  if (b <= a) throw new Error('Неверный отрезок: конец раньше начала.');
+  const chans = Array.from({ length: buf.numberOfChannels }, (_, c) => buf.getChannelData(c).subarray(a, b));
+  return { numberOfChannels: buf.numberOfChannels, sampleRate: buf.sampleRate, length: b - a, getChannelData: (c) => chans[c] };
 }
 
 async function convertMedia(file, ext, target, opts, onProgress, onStatus = () => {}) {
-  if (target === 'webm' || target === 'mp4') return recordVideo(file, target, onProgress);
-  if (target === 'gif') return videoToGif(file, onProgress, onStatus);
-  const buf = await decodeAudio(file);
+  const trim = opts.trim || null;
+  if (target === 'webm' || target === 'mp4') return recordVideo(file, target, onProgress, trim);
+  if (target === 'gif') return videoToGif(file, onProgress, onStatus, trim);
+  if (target === 'frames') return videoFrames(file, onProgress, onStatus, opts);
+  let buf = await decodeAudio(file);
+  if (trim) buf = sliceAudio(buf, trim.start, trim.end);
   onProgress(0.1);
   if (target === 'wav') return encodeWAV(buf);
   return encodeMP3(buf, opts.bitrate, (p) => onProgress(0.1 + p * 0.9));
@@ -2102,6 +2277,9 @@ const SERVER_ERRORS = {
   ARCHIVE_FAILED: 'Не удалось распаковать архив (повреждён или формат не поддерживается).',
   ARCHIVE_ENCRYPTED: 'Архив защищён паролем — распаковать нельзя.',
   BAD_PARAMS: 'Неверный запрос к серверу.',
+  OFFICE_NOT_INSTALLED: 'На компьютере не найден Microsoft Office.',
+  OFFICE_BLOCKED: 'Word/PowerPoint показал вопрос на экране компьютера и ждёт ответа. Ответьте на него (лучше отметить «Не показывать это сообщение») и повторите.',
+  OFFICE_FAILED: 'Office не смог открыть или сохранить файл (повреждён или защищён паролем?).',
 };
 
 function serverError(text) {
@@ -2174,6 +2352,16 @@ async function serverPost(path, file) {
  * Сборки (A3D) и чертежи ссылаются на файлы деталей. Поэтому вместе с основным файлом
  * отправляем все CAD-файлы из той же папки/архива — КОМПАС найдёт их рядом.
  */
+/** DOC, PPT и точная PPTX → PDF через установленный на компьютере владельца Microsoft Office */
+async function convertOffice(item, onStatus) {
+  const { file, ext, target } = item;
+  onStatus(`Конвертация через Microsoft ${['ppt', 'pps', 'ppsx', 'pptx'].includes(ext) ? 'PowerPoint' : 'Word'}…`);
+  const { data } = await serverPost(`/api/office?from=${encodeURIComponent(ext)}&to=${encodeURIComponent(target)}`, file);
+  if (target === 'jpg') return { blob: new Blob([data], { type: MIME.zip }), ext: 'zip', note: 'слайды в ZIP' };
+  const types = { rtf: 'application/rtf', odt: 'application/vnd.oasis.opendocument.text', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' };
+  return new Blob([data], { type: MIME[target] || types[target] || 'application/octet-stream' });
+}
+
 async function convertCad(item, onStatus) {
   const { file, ext, target } = item;
   // детали часто лежат в подпапках (STANDART PARTS\, OTHER\…) или уровнем выше —
@@ -2326,8 +2514,12 @@ function buildRow(item) {
   links.onclick = (e) => {
     const b = e.target.closest('button');
     if (!b || item.status === 'work') return;
-    if (b.dataset.l === 'doc') openDocEditor(item);
-    else openTools(b.dataset.l, item.file);
+    const l = b.dataset.l;
+    if (l === 'doc') openDocEditor(item);
+    else if (l === 'img') openImageEditor(item);
+    else if (l === 'media') openTrim(item);
+    else if (l === 'share') shareResult(item.result);
+    else openTools(l, item.file);
   };
   info.append(name, meta, links, progress);
 
@@ -2358,7 +2550,7 @@ function buildRow(item) {
 function rebuildTargets(item) {
   const sel = item.el.target;
   sel.innerHTML = '';
-  if (item.targets.length) for (const t of item.targets) sel.add(new Option(t.toUpperCase(), t));
+  if (item.targets.length) for (const t of item.targets) sel.add(new Option(targetLabel(t), t));
   else sel.add(new Option('—', ''));
   if (item.target) sel.value = item.target;
 }
@@ -2387,8 +2579,11 @@ function refreshRow(item) {
   // быстрые действия: редактирование документа и инструменты PDF
   const L = [];
   if (item.cat === 'doc' && item.ext) L.push(['doc', '✏ Редактировать текст']);
-  if (item.ext === 'pdf') L.push(['pages', '🛠 Страницы'], ['edit', '✍ Вставить текст/подпись'], ['redact', '⬛ Скрыть данные']);
-  const sig = L.map((x) => x[0]).join();
+  if (item.ext === 'pdf') L.push(['pages', '🛠 Страницы'], ['compress', '🗜 Сжать'], ['edit', '✍ Текст/подпись'], ['stamp', '# Номера/знак'], ['protect', '🔒 Пароль'], ['redact', '⬛ Скрыть данные']);
+  if (item.cat === 'image' && item.ext) L.push(['img', item.editedImage ? '✂ Изменить фото (изменено)' : '✂ Обрезать, повернуть, сжать']);
+  if (item.cat === 'media' && item.ext) L.push(['media', item.trim ? `✂ Обрезка ${fmtTime(item.trim.start)}–${item.trim.end ? fmtTime(item.trim.end) : 'конец'}` : '✂ Обрезать']);
+  if (item.status === 'done' && canShareFiles()) L.push(['share', '📤 Поделиться']);
+  const sig = L.map((x) => x.join(':')).join('|');
   if (item.el.links.dataset.sig !== sig) {
     item.el.links.dataset.sig = sig;
     item.el.links.innerHTML = L.map(([k, t]) => `<button class="link-btn" data-l="${k}">${t}</button>`).join('');
@@ -2439,21 +2634,33 @@ async function convertItem(item) {
   setProgress(item, null);
   const onProgress = (p) => setProgress(item, p);
   const onStatus = (text) => { item.workText = text; item.el.meta.textContent = text; };
-  const opts = getOptions();
+  const opts = { ...getOptions(), trim: item.trim || null };
+  if (item.maxKB) opts.maxKB = item.maxKB;
   const { file, ext, target } = item;
   try {
     let res;
     switch (item.cat) {
-      case 'image': res = await convertImage(file, canon(ext), target, opts, onProgress, onStatus); break;
+      case 'image':
+        // фото, отредактированное в конвертере (обрезка, поворот, размер, фон), хранится как PNG
+        res = item.editedImage
+          ? await convertImage(new File([item.editedImage], item.outBase + '.png', { type: 'image/png' }), 'png', target, opts, onProgress, onStatus)
+          : await convertImage(file, canon(ext), target, opts, onProgress, onStatus);
+        break;
       case 'data':  res = await convertData(file, ext, target); break;
-      case 'doc':   res = await convertDoc(file, ext, target, opts, onProgress, onStatus, item.editedHtml); break;
+      case 'doc':
+        // PPTX → PDF/JPG точно, как в PowerPoint (только на компьютере владельца)
+        if (ext === 'pptx' && (target === 'pdf' || target === 'jpg')) { res = await convertOffice(item, onStatus); break; }
+        res = await convertDoc(file, ext, target, opts, onProgress, onStatus, item.editedHtml);
+        break;
       case 'media': res = await convertMedia(file, ext, target, opts, onProgress, onStatus); break;
       case 'cad':   res = await convertCad(item, onStatus); break;
+      case 'office': res = await convertOffice(item, onStatus); break;
     }
     const blob = res instanceof Blob ? res : res.blob;
     const outExt = res instanceof Blob ? target : res.ext;
     item.result = { blob, name: `${item.outBase}.${outExt}`, path: item.path, note: res.note, warn: res.warn };
     item.status = 'done';
+    if (typeof addHistory === 'function') addHistory(item.result).catch(() => {});
   } catch (e) {
     console.error(e);
     item.status = 'error';
@@ -2745,10 +2952,12 @@ if (onThisPC && location.protocol.startsWith('http')) { pollAdmin(); setInterval
     const st = await (await fetch('/api/status', { cache: 'no-store' })).json();
     if (!st.server) return;
     pcFeatures = true;
+    officeAvailable = !!st.office;
     document.body.classList.add('pc');
     // файлы, добавленные до ответа сервера, определяем заново
     for (const it of items) {
-      if (it.cat || it.status === 'work') continue;
+      if (it.status === 'work') continue;
+      if (it.cat) { if (it.ext === 'pptx') { it.targets = targetsFor(it.cat, it.ext); rebuildTargets(it); } continue; }
       await identify(it); rebuildTargets(it); refreshRow(it);
       if (it.cat === 'archive') unpack(it);
     }
