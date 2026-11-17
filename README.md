@@ -10,7 +10,7 @@
 
 - **PDF:** объединить, разделить, удалить/повернуть/переставить страницы, сжать, вставить текст и подпись, номера страниц и водяной знак, пароль (AES-256), PDF → Excel,
   скрыть данные с настоящим удалением из файла (а не закрашиванием).
-- **Документы:** DOCX, RTF, ODT, PDF, TXT, Markdown, HTML, DjVu → PDF, DOCX, JPG, PNG, EPUB, FB2, HTML, Markdown, TXT; PowerPoint (PPTX) → DOCX, TXT; правка текста перед конвертацией.
+- **Документы:** DOCX, RTF, ODT, PDF, TXT, Markdown, HTML, DjVu → PDF, DOCX, JPG, PNG, EPUB, FB2, HTML, Markdown, TXT; PowerPoint (PPTX) → слайды PDF и JPG, DOCX, TXT; старые Word (DOC) и PowerPoint (PPT) → PDF, DOCX, TXT, HTML — без Microsoft Office; правка текста перед конвертацией.
 - **Распознавание текста:** сканы PDF/DjVu и фото/скриншоты → TXT, DOCX (русский и английский).
 - **Книги:** EPUB, FB2, MOBI, AZW → PDF, DOCX, EPUB, FB2, TXT.
 - **Фото:** HEIC, TIFF, PNG, JPG, WEBP, BMP, GIF, SVG, AVIF → PNG, JPG, WEBP, PDF, GIF, TIFF, BMP, ICO; обрезка, поворот, сжатие до нужного размера, удаление фона, склейка.

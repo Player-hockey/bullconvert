@@ -63,6 +63,11 @@ const I18N_EN = {
   'На экране появится значок BullConvert с быком — он открывается как отдельное приложение.': 'A BullConvert bull icon appears on your home screen — it opens as a separate app.',
   '✅ Этот сайт работает прямо на вашем устройстве — файлы никуда не загружаются.': '✅ This site runs right on your device — files are never uploaded.',
   'Проверяю…': 'Checking…', 'Закрыть': 'Close',
+  // старые Word/PowerPoint
+  'Старый Word и PowerPoint': 'Old Word & PowerPoint', 'Чтение старого формата Office…': 'Reading old Office format…',
+  'Office не ответил — конвертирую в браузере…': 'Office did not respond — converting in the browser…',
+  '⚠ без Office: оформление упрощённое': '⚠ without Office: simplified layout', 'слайды в ZIP': 'slides in ZIP',
+  'Конвертация через Microsoft Word…': 'Converting with Microsoft Word…', 'Конвертация через Microsoft PowerPoint…': 'Converting with Microsoft PowerPoint…',
 };
 
 // Шаблоны с числами и вставками
@@ -74,7 +79,8 @@ const I18N_RULES = [
   [/^Распознавание текста: страница (\d+) из (\d+)…$/, 'Recognizing text: page $1 of $2…'],
   [/^(\d+) стр\.$/, '$1 pages'], [/^(\d+) кадров$/, '$1 frames'], [/^(\d+) лист\(ов\)$/, '$1 sheet(s)'],
   [/^стр\. (\d+) из (\d+)$/, 'page $1 of $2'], [/^Итог: (\d+) × (\d+) px(.*)$/, 'Result: $1 × $2 px$3'],
-  [/^✂ Обрезка (.*)$/, '✂ Trim $1'], [/^(\d+) стр\. в ZIP$/, '$1 pages in ZIP'],
+  [/^✂ Обрезка (.*)$/, '✂ Trim $1'], [/^Слайд (\d+) из (\d+)…$/, 'Slide $1 of $2…'], [/^Слайдов: (\d+)$/, 'Slides: $1'],
+  [/^⚠ не нарисовано (.*)$/, (m, x) => '⚠ not drawn: ' + x.replace('диаграмм', 'charts').replace('картинок', 'images')], [/^(\d+) стр\. в ZIP$/, '$1 pages in ZIP'],
 ];
 
 const I18N_SKIP = '.name, .m-name, .t-name, .h-info b, #editTitle, #imgTitle, #mediaTitle, #editArea, script, style, code, .pv-text-in';

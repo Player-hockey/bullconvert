@@ -64,14 +64,13 @@ const ARCHIVES = ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz'];
 const CATEGORIES = {
   image:   { label: 'Фото',    in: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'ico', 'svg', 'avif', 'heic', 'heif', 'tif', 'tiff'] },
   data:    { label: 'Данные',  in: ['csv', 'tsv', 'json', 'xlsx', 'xls', 'ods', 'xml', 'yaml', 'yml'] },
-  doc:     { label: 'Док',     in: ['txt', 'md', 'markdown', 'html', 'htm', 'docx', 'rtf', 'odt', 'pptx', 'pdf', 'djvu', 'djv', 'epub', 'fb2', 'mobi', 'azw', 'azw3', 'prc'] },
+  doc:     { label: 'Док',     in: ['txt', 'md', 'markdown', 'html', 'htm', 'docx', 'doc', 'dot', 'rtf', 'odt', 'pptx', 'ppsx', 'ppt', 'pps', 'pdf', 'djvu', 'djv', 'epub', 'fb2', 'mobi', 'azw', 'azw3', 'prc'] },
   media:   { label: 'Медиа',   in: ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'webm', 'mp4', 'mov', 'mkv'] },
   cad:     { label: 'CAD',     in: [...CAD_2D, ...CAD_SPEC, ...CAD_ACAD, ...CAD_3D] },
-  office:  { label: 'Office',  in: ['doc', 'dot', 'ppt', 'pps', 'ppsx'] },
   archive: { label: 'Архив',   in: ARCHIVES },
 };
 
-const SAME = { jpeg: 'jpg', yml: 'yaml', htm: 'html', markdown: 'md', oga: 'ogg', djv: 'djvu', heif: 'heic', azw: 'mobi', azw3: 'mobi', prc: 'mobi', tif: 'tiff' };
+const SAME = { jpeg: 'jpg', yml: 'yaml', htm: 'html', markdown: 'md', oga: 'ogg', djv: 'djvu', heif: 'heic', azw: 'mobi', azw3: 'mobi', prc: 'mobi', tif: 'tiff', dot: 'doc', pps: 'ppt', ppsx: 'pptx' };
 const canon = (e) => SAME[e] || e;
 
 // Запись MP4 умеют Chrome/Edge (новые версии) и Safari; иначе предлагаем WEBM
@@ -88,8 +87,10 @@ function targetsFor(cat, ext) {
     case 'doc':
       if (ext === 'pdf') return ['docx', 'xlsx', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
       if (canon(ext) === 'djvu') return ['pdf', 'png', 'jpg', 'docx', 'txt', 'md', 'html', 'epub', 'fb2'];
-      // текст и картинки слайдов; на компьютере владельца с PowerPoint — ещё и точный PDF/JPG
-      if (ext === 'pptx') return [...(pcFeatures && officeAvailable ? ['pdf', 'jpg'] : []), 'docx', 'txt', 'md', 'html'];
+      // слайды рисуются в браузере; на компьютере владельца с Office — ещё и точно через PowerPoint/Word
+      if (canon(ext) === 'pptx') return ['pdf', 'jpg', 'docx', 'txt', 'md', 'html'];
+      if (canon(ext) === 'ppt') return ['pdf', ...(pcFeatures && officeAvailable ? ['pptx', 'jpg'] : []), 'docx', 'txt', 'md', 'html'];
+      if (canon(ext) === 'doc') return ['pdf', 'docx', ...(pcFeatures && officeAvailable ? ['rtf', 'odt'] : []), 'txt', 'html', 'md', 'epub', 'fb2'];
       return not(['pdf', 'docx', 'png', 'jpg', 'epub', 'fb2', 'html', 'md', 'txt']);
     case 'media':
       if (VIDEO_EXT.includes(ext)) return not([...(recordable(MP4_TYPES) ? ['mp4'] : []), 'webm', 'gif', 'mp3', 'wav', 'frames']);
@@ -101,10 +102,6 @@ function targetsFor(cat, ext) {
       if (ext === 'dxf') return ['pdf', 'dwg', 'cdw', 'png', 'jpg'];
       if (CAD_3D.includes(ext)) return ['step', 'stl', 'igs', 'png', 'jpg', 'pdf'];
       return [];
-    // старые форматы Office — через установленный Word/PowerPoint на компьютере владельца
-    case 'office':
-      if (['ppt', 'pps', 'ppsx'].includes(ext)) return ['pdf', 'pptx', 'jpg'];
-      return ['pdf', 'docx', 'rtf', 'odt', 'txt'];
     default: return [];
   }
 }
@@ -140,7 +137,6 @@ let officeAvailable = false; // на компьютере владельца у�
 const catOf = (ext) => {
   const c = Object.keys(CATEGORIES).find((k) => CATEGORIES[k].in.includes(ext)) || null;
   if (!pcFeatures && (c === 'cad' || (c === 'archive' && ext !== 'zip'))) return null;
-  if (c === 'office' && !(pcFeatures && officeAvailable)) return null;
   return c;
 };
 
@@ -1585,6 +1581,7 @@ async function docToHtml(file, ext, onProgress, onStatus) {
     case 'rtf': return rtfToHtml(new TextDecoder('latin1').decode(new Uint8Array(await file.arrayBuffer())));
     case 'odt': return odtToHtml(file);
     case 'pptx': return pptxToHtml(file, onStatus);
+    case 'doc': case 'ppt': return legacyOfficeToHtml(file, ext, onProgress, onStatus);
   }
   throw new Error('Неизвестный формат документа.');
 }
@@ -1625,13 +1622,20 @@ async function htmlToPdfText(html, title, opt = {}) {
         img.setAttribute('src', await toPngDataUrl(s));
       }
       ['width', 'height', 'style'].forEach((a) => img.removeAttribute(a));
+      // запоминаем настоящий размер, чтобы маленькие картинки (формулы, значки) не растягивались на весь лист
+      try { const im = await imageFromUrl(img.getAttribute('src')); img.setAttribute('width', String(Math.round(im.naturalWidth * 0.75))); img.setAttribute('height', String(Math.round(im.naturalHeight * 0.75))); } catch { /* размер неизвестен */ }
     } catch { img.remove(); }
   }
   const content = htmlToPdfmake(root.innerHTML, { window });
   const fit = (n) => {
     if (Array.isArray(n)) { n.forEach(fit); return; }
     if (!n || typeof n !== 'object') return;
-    if (n.image) { delete n.width; delete n.height; n.fit = opt.landscape ? [760, 470] : [515, 700]; }
+    if (n.image) {
+      const box = opt.landscape ? [760, 470] : [515, 700];
+      const w = parseFloat(n.width), h = parseFloat(n.height);
+      delete n.width; delete n.height;
+      n.fit = w > 0 && h > 0 ? [Math.min(box[0], w), Math.min(box[1], h)] : box;
+    }
     if (n.table) n.table.headerRows = n.table.body && n.table.body.length > 1 ? 1 : 0; // шапка таблицы на каждой странице
     for (const v of Object.values(n)) if (v && typeof v === 'object') fit(v);
   };
@@ -2041,7 +2045,11 @@ async function convertDoc(file, ext, target, opts, onProgress, onStatus, htmlOve
       });
       return new Blob([td.turndown(html)], { type: MIME.md });
     }
-    case 'pdf': onStatus('Создание PDF…'); return htmlToPdf(html, title);
+    case 'pdf':
+      onStatus('Создание PDF…');
+      // слайды старого PowerPoint — на альбомных листах
+      if (c === 'ppt') return htmlToPdfText(html, title, { landscape: true }).catch(() => htmlToPdf(html, title));
+      return htmlToPdf(html, title);
     case 'docx': return htmlToDocx(html);
     case 'epub': return htmlToEpub(html, title);
     case 'fb2': return new Blob([await htmlToFb2(html, title)], { type: MIME.fb2 });
@@ -2352,10 +2360,37 @@ async function serverPost(path, file) {
  * Сборки (A3D) и чертежи ссылаются на файлы деталей. Поэтому вместе с основным файлом
  * отправляем все CAD-файлы из той же папки/архива — КОМПАС найдёт их рядом.
  */
+// Что Office (Word/PowerPoint) на компьютере владельца делает точнее браузера
+const OFFICE_EXACT = { doc: ['pdf', 'docx', 'rtf', 'odt', 'txt'], ppt: ['pdf', 'pptx', 'jpg'], pptx: ['pdf', 'jpg'] };
+// Что умеет браузер сам — запасной путь, если Office занят, задал вопрос или не установлен
+const BROWSER_OK = { doc: ['pdf', 'docx', 'txt'], ppt: ['pdf'], pptx: ['pdf', 'jpg'] };
+
+/** Документы: старые DOC/PPT и слайды PPTX — сначала через Office (если есть), иначе или при сбое — в браузере */
+async function convertDocument(item, opts, onProgress, onStatus) {
+  const { file, ext, target } = item;
+  const c = canon(ext);
+  const browser = () => (c === 'pptx' && (target === 'pdf' || target === 'jpg') && !item.editedHtml
+    ? slidesConvert(file, target, opts, onProgress, onStatus)
+    : convertDoc(file, ext, target, opts, onProgress, onStatus, item.editedHtml));
+  const viaOffice = pcFeatures && officeAvailable && !item.editedHtml && (OFFICE_EXACT[c] || []).includes(target);
+  if (!viaOffice) return browser();
+  try {
+    return await convertOffice(item, onStatus);
+  } catch (e) {
+    if (!(BROWSER_OK[c] || []).includes(target)) throw e;
+    console.warn('Office не справился — конвертирую в браузере:', e);
+    onStatus('Office не ответил — конвертирую в браузере…');
+    setProgress(item, null);
+    const r = await browser();
+    const warn = '⚠ без Office: оформление упрощённое';
+    return r instanceof Blob ? { blob: r, ext: target, warn } : { ...r, warn: r.warn ? `${r.warn}; ${warn}` : warn };
+  }
+}
+
 /** DOC, PPT и точная PPTX → PDF через установленный на компьютере владельца Microsoft Office */
 async function convertOffice(item, onStatus) {
   const { file, ext, target } = item;
-  onStatus(`Конвертация через Microsoft ${['ppt', 'pps', 'ppsx', 'pptx'].includes(ext) ? 'PowerPoint' : 'Word'}…`);
+  onStatus(`Конвертация через Microsoft ${['ppt', 'pptx'].includes(canon(ext)) ? 'PowerPoint' : 'Word'}…`);
   const { data } = await serverPost(`/api/office?from=${encodeURIComponent(ext)}&to=${encodeURIComponent(target)}`, file);
   if (target === 'jpg') return { blob: new Blob([data], { type: MIME.zip }), ext: 'zip', note: 'слайды в ZIP' };
   const types = { rtf: 'application/rtf', odt: 'application/vnd.oasis.opendocument.text', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' };
@@ -2647,14 +2682,9 @@ async function convertItem(item) {
           : await convertImage(file, canon(ext), target, opts, onProgress, onStatus);
         break;
       case 'data':  res = await convertData(file, ext, target); break;
-      case 'doc':
-        // PPTX → PDF/JPG точно, как в PowerPoint (только на компьютере владельца)
-        if (ext === 'pptx' && (target === 'pdf' || target === 'jpg')) { res = await convertOffice(item, onStatus); break; }
-        res = await convertDoc(file, ext, target, opts, onProgress, onStatus, item.editedHtml);
-        break;
+      case 'doc': res = await convertDocument(item, opts, onProgress, onStatus); break;
       case 'media': res = await convertMedia(file, ext, target, opts, onProgress, onStatus); break;
       case 'cad':   res = await convertCad(item, onStatus); break;
-      case 'office': res = await convertOffice(item, onStatus); break;
     }
     const blob = res instanceof Blob ? res : res.blob;
     const outExt = res instanceof Blob ? target : res.ext;
@@ -2957,7 +2987,10 @@ if (onThisPC && location.protocol.startsWith('http')) { pollAdmin(); setInterval
     // файлы, добавленные до ответа сервера, определяем заново
     for (const it of items) {
       if (it.status === 'work') continue;
-      if (it.cat) { if (it.ext === 'pptx') { it.targets = targetsFor(it.cat, it.ext); rebuildTargets(it); } continue; }
+      if (it.cat) {
+        if (['doc', 'ppt'].includes(canon(it.ext))) { it.targets = targetsFor(it.cat, it.ext); rebuildTargets(it); }
+        continue;
+      }
       await identify(it); rebuildTargets(it); refreshRow(it);
       if (it.cat === 'archive') unpack(it);
     }

@@ -1,11 +1,11 @@
 // BullConvert service worker: приложение открывается без сети,
 // а библиотеки с CDN после первого использования берутся из кэша.
-const VERSION = 'bc-v7';
+const VERSION = 'bc-v8';
 const SHELL = `${VERSION}-shell`;
 const LIBS = `${VERSION}-libs`;
 const SHELL_FILES = [
   './', 'index.html', 'app.js', 'style.css', 'manifest.webmanifest',
-  'bullconvert.svg', 'bullconvert.ico', 'icon-192.png', 'icon-512.png', 'access.html', 'pdftools.js', 'extras.js', 'i18n.js',
+  'bullconvert.svg', 'bullconvert.ico', 'icon-192.png', 'icon-512.png', 'access.html', 'pdftools.js', 'extras.js', 'i18n.js', 'office.js',
 ];
 
 self.addEventListener('install', (e) => {
