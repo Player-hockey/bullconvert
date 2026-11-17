@@ -10,11 +10,11 @@
 
 - **PDF:** объединить, разделить, удалить/повернуть/переставить страницы, вставить текст и подпись,
   скрыть данные с настоящим удалением из файла (а не закрашиванием).
-- **Документы:** DOCX, PDF, TXT, Markdown, HTML, DjVu → PDF, DOCX, EPUB, FB2, HTML, Markdown, TXT; правка текста перед конвертацией.
-- **Сканы:** распознавание текста (русский и английский).
+- **Документы:** DOCX, RTF, ODT, PDF, TXT, Markdown, HTML, DjVu → PDF, DOCX, JPG, PNG, EPUB, FB2, HTML, Markdown, TXT; PowerPoint (PPTX) → DOCX, TXT; правка текста перед конвертацией.
+- **Распознавание текста:** сканы PDF/DjVu и фото/скриншоты → TXT, DOCX (русский и английский).
 - **Книги:** EPUB, FB2, MOBI, AZW → PDF, DOCX, EPUB, FB2, TXT.
-- **Фото:** HEIC, PNG, JPG, WEBP, BMP, GIF, SVG, AVIF → PNG, JPG, WEBP, PDF, BMP, ICO.
-- **Таблицы:** XLSX, CSV, JSON, XML, YAML (все листы) ↔ друг в друга.
-- **Аудио/видео:** MP3, WAV, OGG, M4A, FLAC, MP4, WEBM → MP3, WAV, WEBM.
+- **Фото:** HEIC, TIFF, PNG, JPG, WEBP, BMP, GIF, SVG, AVIF → PNG, JPG, WEBP, PDF, GIF, TIFF, BMP, ICO.
+- **Таблицы и XML:** XLSX, CSV, JSON, XML, YAML (все листы) → PDF, Word, Excel и друг в друга.
+- **Аудио/видео:** MP3, WAV, OGG, M4A, FLAC, MP4, WEBM, MOV → MP3, WAV, MP4, WEBM, GIF.
 - **Архивы:** ZIP, папки целиком.
 

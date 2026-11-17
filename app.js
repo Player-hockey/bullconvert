@@ -28,6 +28,9 @@ const CDN = {
   qrcode:      'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js',
   pdflib:      'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js',
   fontkit:     'https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js',
+  pako:        'https://cdn.jsdelivr.net/npm/pako@1.0.11/dist/pako.min.js',
+  utif:        'https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js',
+  omggif:      'https://cdn.jsdelivr.net/npm/omggif@1.0.10/omggif.js',
 };
 
 const libPromises = {};
@@ -58,27 +61,36 @@ const VIDEO_EXT = ['mp4', 'webm', 'mov', 'mkv'];
 const ARCHIVES = ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz'];
 
 const CATEGORIES = {
-  image:   { label: 'Фото',    in: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'ico', 'svg', 'avif', 'heic', 'heif'] },
+  image:   { label: 'Фото',    in: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'ico', 'svg', 'avif', 'heic', 'heif', 'tif', 'tiff'] },
   data:    { label: 'Данные',  in: ['csv', 'tsv', 'json', 'xlsx', 'xls', 'ods', 'xml', 'yaml', 'yml'] },
-  doc:     { label: 'Док',     in: ['txt', 'md', 'markdown', 'html', 'htm', 'docx', 'pdf', 'djvu', 'djv', 'epub', 'fb2', 'mobi', 'azw', 'azw3', 'prc'] },
+  doc:     { label: 'Док',     in: ['txt', 'md', 'markdown', 'html', 'htm', 'docx', 'rtf', 'odt', 'pptx', 'pdf', 'djvu', 'djv', 'epub', 'fb2', 'mobi', 'azw', 'azw3', 'prc'] },
   media:   { label: 'Медиа',   in: ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'webm', 'mp4', 'mov', 'mkv'] },
   cad:     { label: 'CAD',     in: [...CAD_2D, ...CAD_SPEC, ...CAD_ACAD, ...CAD_3D] },
   archive: { label: 'Архив',   in: ARCHIVES },
 };
 
-const SAME = { jpeg: 'jpg', yml: 'yaml', htm: 'html', markdown: 'md', oga: 'ogg', djv: 'djvu', heif: 'heic', azw: 'mobi', azw3: 'mobi', prc: 'mobi' };
+const SAME = { jpeg: 'jpg', yml: 'yaml', htm: 'html', markdown: 'md', oga: 'ogg', djv: 'djvu', heif: 'heic', azw: 'mobi', azw3: 'mobi', prc: 'mobi', tif: 'tiff' };
 const canon = (e) => SAME[e] || e;
+
+// Запись MP4 умеют Chrome/Edge (новые версии) и Safari; иначе предлагаем WEBM
+const MP4_TYPES = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4'];
+const WEBM_TYPES = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+const recordable = (types) => (window.MediaRecorder && types.find((m) => MediaRecorder.isTypeSupported(m))) || null;
 
 function targetsFor(cat, ext) {
   const not = (list) => list.filter((t) => t !== canon(ext));
   switch (cat) {
-    case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'bmp', 'ico']);
-    case 'data':  return not(['xlsx', 'csv', 'tsv', 'json', 'yaml', 'xml', 'html', 'md']);
+    // txt/docx у фото — распознавание текста со снимка
+    case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'gif', 'tiff', 'bmp', 'ico', 'txt', 'docx']);
+    case 'data':  return not(['pdf', 'xlsx', 'docx', 'csv', 'tsv', 'json', 'yaml', 'xml', 'html', 'md']);
     case 'doc':
       if (ext === 'pdf') return ['docx', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
       if (canon(ext) === 'djvu') return ['pdf', 'png', 'jpg', 'docx', 'txt', 'md', 'html', 'epub', 'fb2'];
-      return not(['pdf', 'docx', 'epub', 'fb2', 'html', 'md', 'txt']);
-    case 'media': return not(['mp3', 'wav', ...(VIDEO_EXT.includes(ext) ? ['webm'] : [])]);
+      if (ext === 'pptx') return ['docx', 'txt', 'md', 'html']; // текст и картинки слайдов
+      return not(['pdf', 'docx', 'png', 'jpg', 'epub', 'fb2', 'html', 'md', 'txt']);
+    case 'media':
+      if (VIDEO_EXT.includes(ext)) return not([...(recordable(MP4_TYPES) ? ['mp4'] : []), 'webm', 'gif', 'mp3', 'wav']);
+      return not(['mp3', 'wav']);
     case 'cad':
       if (CAD_2D.includes(ext)) return ['pdf', 'dwg', 'dxf', 'png', 'jpg'];
       if (CAD_SPEC.includes(ext)) return ['pdf'];
@@ -92,6 +104,7 @@ function targetsFor(cat, ext) {
 
 const MIME = {
   png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', bmp: 'image/bmp', ico: 'image/x-icon',
+  gif: 'image/gif', tiff: 'image/tiff', mp4: 'video/mp4',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   csv: 'text/csv;charset=utf-8', tsv: 'text/tab-separated-values;charset=utf-8',
   json: 'application/json;charset=utf-8', yaml: 'text/yaml;charset=utf-8', xml: 'application/xml;charset=utf-8',
@@ -177,10 +190,12 @@ async function sniffZip(file) {
   }
   if (has('word/document.xml')) return 'docx';
   if (has('xl/workbook.xml')) return 'xlsx';
+  if (has('ppt/presentation.xml')) return 'pptx';
   if (has('mimetype')) {
     const mt = (await zip.file('mimetype').async('string')).trim();
     if (mt === 'application/epub+zip') return 'epub';
     if (mt === 'application/vnd.oasis.opendocument.spreadsheet') return 'ods';
+    if (mt === 'application/vnd.oasis.opendocument.text') return 'odt';
   }
   return 'zip';
 }
@@ -213,6 +228,8 @@ async function sniff(file) {
     return 'mp4';
   }
   if (h[0] === 0x1A && h[1] === 0x45 && h[2] === 0xDF && h[3] === 0xA3) return 'webm';
+  if (s(0, 4) === 'II*\u0000' || s(0, 4) === 'MM\u0000*') return 'tiff';
+  if (s(0, 5) === '{\\rtf') return 'rtf';
   if (s(0, 2) === 'BM') return 'bmp';
   if (s(0, 2) === 'PK') return sniffZip(file);
   const text = decodeText(h);
@@ -228,7 +245,32 @@ async function sniff(file) {
 
 /* ========================== ИЗОБРАЖЕНИЯ ========================== */
 
+/** Страницы TIFF (сканы часто многостраничные) → холсты. Браузеры TIFF сами не открывают. */
+async function tiffCanvases(file, maxPages = 500) {
+  await loadLib('pako'); // нужен UTIF для сжатия Deflate
+  await loadLib('utif');
+  const buf = await file.arrayBuffer();
+  let ifds;
+  try { ifds = UTIF.decode(buf); } catch { throw new Error('Не удалось прочитать TIFF (файл повреждён?).'); }
+  const pages = ifds.filter((f) => f.t256 || f.width).slice(0, maxPages);
+  const out = [];
+  for (const ifd of pages) {
+    UTIF.decodeImage(buf, ifd);
+    const rgba = UTIF.toRGBA8(ifd);
+    const c = document.createElement('canvas');
+    c.width = ifd.width; c.height = ifd.height;
+    c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.length), ifd.width, ifd.height), 0, 0);
+    out.push(c);
+  }
+  if (!out.length) throw new Error('В TIFF нет изображений.');
+  return out;
+}
+
 async function imageSource(file, ext) {
+  if (ext === 'tiff' || ext === 'tif') {
+    const [c] = await tiffCanvases(file, 1);
+    return canvasToBlob(c, 'image/png');
+  }
   if (ext === 'heic' || ext === 'heif') {
     await loadLib('heic2any');
     let out;
@@ -255,7 +297,15 @@ async function loadImage(blob) {
   catch (e) { URL.revokeObjectURL(url); throw e; }
 }
 
-async function convertImage(file, ext, target, opts) {
+async function convertImage(file, ext, target, opts, onProgress = () => {}, onStatus = () => {}) {
+  // многостраничный TIFF → PDF: все страницы
+  if (ext === 'tiff' && target === 'pdf') {
+    onStatus('Чтение страниц TIFF…');
+    const pages = await tiffCanvases(file);
+    const pdf = await createImagePdf();
+    pages.forEach((c, i) => { pdf.add(c, opts.quality); onProgress((i + 1) / pages.length); });
+    return { blob: pdf.blob(), ext: 'pdf', note: pages.length > 1 ? `${pages.length} стр.` : '' };
+  }
   const { img, url } = await loadImage(await imageSource(file, ext));
   try {
     let w = img.naturalWidth || 1024;
@@ -275,12 +325,35 @@ async function convertImage(file, ext, target, opts) {
     }
 
     canvas.width = w; canvas.height = h;
-    if (target === 'jpg' || target === 'bmp' || target === 'pdf') {
+    if (['jpg', 'bmp', 'pdf', 'txt', 'docx'].includes(target)) {
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, w, h);
     }
     ctx.drawImage(img, 0, 0, w, h);
 
+    // фото → текст: распознавание (русский + английский)
+    if (target === 'txt' || target === 'docx') {
+      // мелкий текст распознаётся лучше на увеличенном снимке
+      let src = canvas;
+      if (Math.max(w, h) < 1600) {
+        const k = 1600 / Math.max(w, h);
+        src = document.createElement('canvas');
+        src.width = Math.round(w * k); src.height = Math.round(h * k);
+        const sctx = src.getContext('2d');
+        sctx.imageSmoothingQuality = 'high';
+        sctx.drawImage(canvas, 0, 0, src.width, src.height);
+      }
+      onStatus('Распознавание текста…');
+      const text = (await ocrCanvas(src, onStatus, onProgress)).trim();
+      if (!text) throw new Error('Текст на изображении не найден.');
+      if (target === 'txt') return new Blob([text + '\n'], { type: MIME.txt });
+      return htmlToDocx(textToHtml(text));
+    }
+    if (target === 'gif') return encodeGIF([ctx.getImageData(0, 0, w, h)], w, h, 0);
+    if (target === 'tiff') {
+      await loadLib('pako'); await loadLib('utif');
+      return new Blob([UTIF.encodeImage(ctx.getImageData(0, 0, w, h).data.buffer, w, h)], { type: MIME.tiff });
+    }
     if (target === 'bmp') return encodeBMP(ctx, w, h);
     if (target === 'pdf') {
       const pdf = await createImagePdf();
@@ -343,6 +416,75 @@ async function encodeICO(pngBlob, size) {
   v.setUint32(18, 22, true);
   new Uint8Array(buf).set(png, 22);
   return new Blob([buf], { type: MIME.ico });
+}
+
+/**
+ * GIF из одного или нескольких кадров (ImageData одного размера).
+ * Палитра: точная, если цветов ≤ 255, иначе равномерная 6×7×6 (+ дизеринг для одиночной картинки).
+ * delayCs — пауза между кадрами в сотых долях секунды.
+ */
+async function encodeGIF(frames, w, h, delayCs = 0) {
+  await loadLib('omggif');
+  let hasAlpha = false;
+  const exact = new Map();
+  let tooMany = false;
+  outer: for (const f of frames) {
+    const d = f.data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 128) { hasAlpha = true; continue; }
+      const k = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+      if (!exact.has(k)) { if (exact.size >= 255) { tooMany = true; break outer; } exact.set(k, exact.size); }
+    }
+  }
+  let palette, transparent, index;
+  if (!tooMany) {
+    palette = [...exact.keys()];
+    transparent = palette.length;
+    index = (r, g, b) => exact.get((r << 16) | (g << 8) | b);
+  } else {
+    palette = [];
+    for (let r = 0; r < 6; r++) for (let g = 0; g < 7; g++) for (let b = 0; b < 6; b++) {
+      palette.push((Math.round(r * 51) << 16) | (Math.round(g * 42.5) << 8) | Math.round(b * 51));
+    }
+    transparent = 252;
+    index = (r, g, b) => Math.round(r / 51) * 42 + Math.round(g / 42.5) * 6 + Math.round(b / 51);
+  }
+  palette.push(0); // место под прозрачный цвет
+  let size = 2;
+  while (size < palette.length) size *= 2;
+  while (palette.length < size) palette.push(0);
+
+  const dither = tooMany && frames.length === 1;
+  const buf = new Uint8Array(Math.ceil(w * h * frames.length * 1.6) + 65536);
+  const gw = new GifWriter(buf, w, h, frames.length > 1 ? { loop: 0 } : {});
+  for (const f of frames) {
+    const d = f.data;
+    const px = new Uint8Array(w * h);
+    if (dither) {
+      // Флойд–Стейнберг: ошибки цвета переносятся на соседей — меньше полос на градиентах
+      const err = new Float32Array(w * h * 3);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const p = y * w + x, i = p * 4;
+        if (d[i + 3] < 128) { px[p] = transparent; continue; }
+        const r = Math.min(255, Math.max(0, d[i] + err[p * 3]));
+        const g = Math.min(255, Math.max(0, d[i + 1] + err[p * 3 + 1]));
+        const b = Math.min(255, Math.max(0, d[i + 2] + err[p * 3 + 2]));
+        const k = index(r, g, b);
+        px[p] = k;
+        const c = palette[k];
+        const er = r - (c >> 16 & 255), eg = g - (c >> 8 & 255), eb = b - (c & 255);
+        const spread = (q, f2) => { if (q < 0 || q >= w * h) return; err[q * 3] += er * f2; err[q * 3 + 1] += eg * f2; err[q * 3 + 2] += eb * f2; };
+        if (x + 1 < w) spread(p + 1, 7 / 16);
+        if (y + 1 < h) { if (x > 0) spread(p + w - 1, 3 / 16); spread(p + w, 5 / 16); if (x + 1 < w) spread(p + w + 1, 1 / 16); }
+      }
+    } else {
+      for (let p = 0, i = 0; p < px.length; p++, i += 4) px[p] = d[i + 3] < 128 ? transparent : index(d[i], d[i + 1], d[i + 2]);
+    }
+    const o = { palette, delay: delayCs, disposal: 1 };
+    if (hasAlpha) o.transparent = transparent;
+    gw.addFrame(0, 0, w, h, px, o);
+  }
+  return new Blob([buf.slice(0, gw.end())], { type: MIME.gif });
 }
 
 /** PDF из картинок: каждая картинка — отдельная страница своего размера. */
@@ -529,12 +671,57 @@ function mdTable(rows) {
     rows.map((r) => `| ${cols.map((c) => esc(r[c])).join(' | ')} |`).join('\n') + '\n';
 }
 
+/** Таблица с одной записью и множеством полей удобнее «вертикально»: Поле | Значение */
+function docTable(rows) {
+  const cols = columnsOf(rows);
+  if (rows.length === 1 && cols.length > 6) {
+    return '<table><thead><tr><th>Поле</th><th>Значение</th></tr></thead><tbody>' +
+      cols.map((c) => `<tr><td><b>${escapeHtml(c)}</b></td><td>${escapeHtml(rows[0][c] ?? '')}</td></tr>`).join('') + '</tbody></table>';
+  }
+  return htmlTable(rows);
+}
+
+/** XML, который не является списком однотипных записей, показываем деревом (как документ) */
+function xmlIsTabular(doc) {
+  const kids = [...doc.documentElement.children];
+  if (kids.length < 2) return false;
+  const tag = kids[0].tagName;
+  return kids.every((k) => k.tagName === tag && [...k.children].every((c) => c.children.length === 0));
+}
+
+function xmlTreeHtml(el) {
+  const attrs = [...el.attributes].map((a) => `<i>${escapeHtml(a.name)}</i>=«${escapeHtml(a.value)}»`).join(', ');
+  const kids = [...el.children];
+  const text = kids.length ? '' : el.textContent.trim();
+  const head = `<b>${escapeHtml(el.tagName)}</b>${attrs ? ` (${attrs})` : ''}${text ? ': ' + escapeHtml(text) : ''}`;
+  return `<li>${head}${kids.length ? '<ul>' + kids.map(xmlTreeHtml).join('') + '</ul>' : ''}</li>`;
+}
+
 async function convertData(file, ext, target) {
   const { sheets, raw } = await parseData(file, ext);
   const filled = sheets.filter((s) => s.rows.length);
   const many = filled.length > 1;
   const list = filled.length ? filled : sheets.slice(0, 1);
+  const title = baseOf(file.name);
   let text;
+
+  // Таблицы, JSON, XML → PDF / Word
+  if (target === 'pdf' || target === 'docx') {
+    let html, wide = 0;
+    const xmlDoc = ext === 'xml' ? new DOMParser().parseFromString(await readText(file), 'application/xml') : null;
+    if (xmlDoc && !xmlIsTabular(xmlDoc)) {
+      html = `<h1>${escapeHtml(title)}</h1><ul>${xmlTreeHtml(xmlDoc.documentElement)}</ul>`;
+    } else {
+      html = list.map((s) => {
+        wide = Math.max(wide, s.rows.length === 1 ? 2 : columnsOf(s.rows).length);
+        return (many ? `<h2>${escapeHtml(s.name)}</h2>` : `<h1>${escapeHtml(title)}</h1>`) + docTable(s.rows);
+      }).join('<hr>');
+    }
+    if (target === 'docx') return htmlToDocx(html);
+    // широкие таблицы — альбомный лист и шрифт помельче
+    return htmlToPdfText(html, title, { landscape: wide > 5, fontSize: wide > 9 ? 7 : wide > 6 ? 9 : 10 });
+  }
+
   switch (target) {
     case 'json': text = JSON.stringify(raw, null, 2); break;
     case 'yaml': await loadLib('yaml'); text = jsyaml.dump(raw, { lineWidth: -1 }); break;
@@ -985,6 +1172,249 @@ async function mobiToHtml(file) {
   return doc.body.innerHTML;
 }
 
+/* ===================== RTF, ODT, PPTX → HTML ===================== */
+
+/** RTF: текст, абзацы, жирный/курсив/подчёркнутый, таблицы (ячейки через табуляцию), кириллица (\'xx и \uN). */
+function rtfToHtml(rtf) {
+  const SKIP = new Set(['fonttbl', 'colortbl', 'stylesheet', 'info', 'pict', 'header', 'footer', 'headerl', 'headerr', 'footerl', 'footerr',
+    'object', 'themedata', 'colorschememapping', 'latentstyles', 'datastore', 'xmlnstbl', 'listtable', 'listoverridetable',
+    'rsidtbl', 'generator', 'filetbl', 'revtbl', 'listtext', 'pgdsctbl', 'mmathPr', 'fldinst', 'bkmkstart', 'bkmkend', 'shpinst', 'nonshppict']);
+  let codepage = 1252;
+  const m = rtf.match(/\\ansicpg(\d+)/);
+  if (m) codepage = +m[1];
+  let dec;
+  try { dec = new TextDecoder('windows-' + codepage); } catch { dec = new TextDecoder('windows-1252'); }
+
+  const paras = [];
+  let runs = [];
+  let st = { b: false, i: false, u: false, skip: false, uc: 1 };
+  const stack = [];
+  let bytes = [];
+  let skipChars = 0;
+  const flushBytes = () => { if (bytes.length) { addText(dec.decode(new Uint8Array(bytes))); bytes = []; } };
+  function addText(t) {
+    if (st.skip || !t) return;
+    const last = runs[runs.length - 1];
+    if (last && last.b === st.b && last.i === st.i && last.u === st.u) last.t += t;
+    else runs.push({ t, b: st.b, i: st.i, u: st.u });
+  }
+  const endPara = () => { flushBytes(); paras.push(runs); runs = []; };
+
+  for (let i = 0; i < rtf.length; i++) {
+    const c = rtf[i];
+    if (c === '{') { flushBytes(); stack.push({ ...st }); continue; }
+    if (c === '}') { flushBytes(); st = stack.pop() || st; continue; }
+    if (c === '\r' || c === '\n') continue;
+    if (c !== '\\') {
+      if (skipChars > 0) { flushBytes(); skipChars--; continue; }
+      // «сырые» 8-битные символы в RTF записаны в кодировке документа (например, Windows-1251)
+      if (c.charCodeAt(0) >= 0x80) { if (!st.skip) bytes.push(c.charCodeAt(0)); continue; }
+      flushBytes();
+      addText(c);
+      continue;
+    }
+    const n = rtf[i + 1];
+    if (n === '\\' || n === '{' || n === '}') { flushBytes(); if (skipChars > 0) skipChars--; else addText(n); i++; continue; }
+    if (n === "'") {
+      const hex = parseInt(rtf.substr(i + 2, 2), 16);
+      i += 3;
+      if (skipChars > 0) { skipChars--; continue; }
+      if (!st.skip) bytes.push(hex);
+      continue;
+    }
+    if (n === '*') { st.skip = true; i++; continue; }
+    if (n === '~') { flushBytes(); addText(' '); i++; continue; }
+    if (n === '_') { flushBytes(); addText('-'); i++; continue; }
+    if (n === '-') { i++; continue; }
+    const w = /^([a-zA-Z]+)(-?\d+)? ?/.exec(rtf.slice(i + 1, i + 40));
+    if (!w) { i++; continue; }
+    i += w[0].length;
+    const word = w[1], arg = w[2] !== undefined ? +w[2] : null;
+    if (SKIP.has(word)) { st.skip = true; continue; }
+    switch (word) {
+      case 'par': case 'sect': case 'page': endPara(); break;
+      case 'line': flushBytes(); addText('\n'); break;
+      case 'tab': case 'cell': flushBytes(); addText('\t'); break;
+      case 'row': endPara(); break;
+      case 'b': flushBytes(); st.b = arg !== 0; break;
+      case 'i': flushBytes(); st.i = arg !== 0; break;
+      case 'ul': flushBytes(); st.u = arg !== 0; break;
+      case 'ulnone': flushBytes(); st.u = false; break;
+      case 'plain': flushBytes(); st.b = st.i = st.u = false; break;
+      case 'uc': st.uc = arg ?? 1; break;
+      case 'u': {
+        flushBytes();
+        addText(String.fromCharCode(arg < 0 ? arg + 65536 : arg));
+        skipChars = st.uc;
+        break;
+      }
+      case 'emdash': flushBytes(); addText('—'); break;
+      case 'endash': flushBytes(); addText('–'); break;
+      case 'lquote': case 'rquote': flushBytes(); addText('’'); break;
+      case 'ldblquote': flushBytes(); addText('«'); break;
+      case 'rdblquote': flushBytes(); addText('»'); break;
+      case 'bullet': flushBytes(); addText('•'); break;
+      default: break;
+    }
+  }
+  endPara();
+  const html = paras.map((p) => {
+    const inner = p.map((r) => {
+      let t = escapeHtml(r.t).replace(/\n/g, '<br>').replace(/\t/g, '&emsp;');
+      if (r.b) t = `<b>${t}</b>`;
+      if (r.i) t = `<i>${t}</i>`;
+      if (r.u) t = `<u>${t}</u>`;
+      return t;
+    }).join('');
+    return inner.replace(/&emsp;|\s|&nbsp;/g, '') ? `<p>${inner}</p>` : '';
+  }).filter(Boolean).join('\n');
+  if (!html) throw new Error('В RTF не найден текст.');
+  return html;
+}
+
+/** ODT (LibreOffice/OpenOffice Writer): заголовки, абзацы, списки, таблицы, жирный/курсив, картинки */
+async function odtToHtml(file) {
+  await loadLib('jszip');
+  const zip = await JSZip.loadAsync(file);
+  const content = zip.file('content.xml');
+  if (!content) throw new Error('Повреждённый ODT: нет content.xml.');
+  const doc = new DOMParser().parseFromString(await content.async('string'), 'application/xml');
+  const attr = (el, name) => { for (const a of el.attributes) if (a.localName === name) return a.value; return ''; };
+  // автоматические стили: какие из них жирные/курсивные/подчёркнутые
+  const styles = {};
+  for (const s of doc.getElementsByTagNameNS('*', 'style')) {
+    const tp = [...s.children].find((c) => c.localName === 'text-properties');
+    if (!tp) continue;
+    styles[attr(s, 'name')] = {
+      b: attr(tp, 'font-weight') === 'bold',
+      i: attr(tp, 'font-style') === 'italic',
+      u: !!attr(tp, 'text-underline-style') && attr(tp, 'text-underline-style') !== 'none',
+    };
+  }
+  const images = {};
+  const inline = async (node) => {
+    let out = '';
+    for (const n of node.childNodes) {
+      if (n.nodeType === 3) { out += escapeHtml(n.textContent); continue; }
+      if (n.nodeType !== 1) continue;
+      switch (n.localName) {
+        case 's': out += ' '.repeat(+attr(n, 'c') || 1); break;
+        case 'tab': out += '&emsp;'; break;
+        case 'line-break': out += '<br>'; break;
+        case 'span': case 'a': {
+          let t = await inline(n);
+          const s = styles[attr(n, 'style-name')];
+          if (s) { if (s.b) t = `<b>${t}</b>`; if (s.i) t = `<i>${t}</i>`; if (s.u) t = `<u>${t}</u>`; }
+          out += t;
+          break;
+        }
+        case 'frame': {
+          const im = [...n.children].find((c) => c.localName === 'image');
+          const href = im && attr(im, 'href');
+          if (href) {
+            if (!(href in images)) images[href] = await zipDataUrl(zip, href);
+            if (images[href]) out += `<img src="${images[href]}">`;
+          }
+          break;
+        }
+        case 'note': case 'annotation': case 'bookmark': case 'bookmark-start': case 'bookmark-end': break;
+        default: out += await inline(n);
+      }
+    }
+    return out;
+  };
+  const block = async (node) => {
+    let out = '';
+    for (const n of node.children) {
+      switch (n.localName) {
+        case 'h': { const lv = Math.min(+attr(n, 'outline-level') || 1, 6); out += `<h${lv}>${await inline(n)}</h${lv}>\n`; break; }
+        case 'p': {
+          let t = await inline(n);
+          const s = styles[attr(n, 'style-name')];
+          if (s) { if (s.b) t = `<b>${t}</b>`; if (s.i) t = `<i>${t}</i>`; }
+          out += `<p>${t}</p>\n`;
+          break;
+        }
+        case 'list': out += `<ul>${(await Promise.all([...n.children].filter((c) => c.localName === 'list-item').map(async (li) => `<li>${(await block(li)).replace(/<\/?p>/g, '')}</li>`))).join('')}</ul>\n`; break;
+        case 'table': {
+          const rows = [...n.getElementsByTagNameNS('*', 'table-row')];
+          out += '<table>' + (await Promise.all(rows.map(async (r) =>
+            '<tr>' + (await Promise.all([...r.children].filter((c) => c.localName === 'table-cell').map(async (c) => `<td>${(await block(c)).replace(/<\/?p>/g, ' ').trim()}</td>`))).join('') + '</tr>'))).join('') + '</table>\n';
+          break;
+        }
+        case 'section': case 'text': out += await block(n); break;
+        default: break;
+      }
+    }
+    return out;
+  };
+  const body = doc.getElementsByTagNameNS('*', 'text')[0];
+  const html = body ? await block(body) : '';
+  if (!html.replace(/<[^>]+>/g, '').trim() && !html.includes('<img')) throw new Error('В ODT не найден текст.');
+  return html;
+}
+
+/** PPTX (PowerPoint): по слайду — заголовок, текст, таблицы и картинки */
+async function pptxToHtml(file, onStatus) {
+  await loadLib('jszip');
+  const zip = await JSZip.loadAsync(file);
+  const xml = async (p) => { const f = zip.file(p); return f ? new DOMParser().parseFromString(await f.async('string'), 'application/xml') : null; };
+  const attr = (el, name) => { for (const a of el.attributes) if (a.localName === name) return a.value; return ''; };
+  const rels = async (p) => {
+    const dir = dirOf(p), name = p.split('/').pop();
+    const d = await xml(`${dir}/_rels/${name}.rels`);
+    const map = {};
+    if (d) for (const r of d.getElementsByTagNameNS('*', 'Relationship')) map[r.getAttribute('Id')] = resolvePath(dir, r.getAttribute('Target'));
+    return map;
+  };
+  const pres = await xml('ppt/presentation.xml');
+  if (!pres) throw new Error('Повреждённый PPTX: нет описания презентации.');
+  const presRels = await rels('ppt/presentation.xml');
+  // у sldId два атрибута с именем id: свой (id) и ссылка (r:id) — нужна ссылка
+  const relId = (el) => { for (const a of el.attributes) if (a.localName === 'id' && /relationships/.test(a.namespaceURI || '')) return a.value; return ''; };
+  const slides = [...pres.getElementsByTagNameNS('*', 'sldId')].map((s) => presRels[relId(s)]).filter(Boolean);
+  if (!slides.length) throw new Error('В презентации нет слайдов.');
+  const paraText = (p) => [...p.getElementsByTagNameNS('*', 't')].map((t) => t.textContent).join('');
+  const parts = [];
+  for (let k = 0; k < slides.length; k++) {
+    onStatus(`Слайд ${k + 1} из ${slides.length}…`);
+    const path = slides[k];
+    const d = await xml(path);
+    if (!d) continue;
+    const r = await rels(path);
+    let title = '';
+    const body = [];
+    const tree = d.getElementsByTagNameNS('*', 'spTree')[0];
+    const walk = async (node) => {
+      for (const el of node.children) {
+        if (el.localName === 'grpSp') { await walk(el); continue; }
+        if (el.localName === 'sp') {
+          const ph = el.getElementsByTagNameNS('*', 'ph')[0];
+          const isTitle = ph && /title|ctrTitle/i.test(ph.getAttribute('type') || '');
+          const ps = [...el.getElementsByTagNameNS('*', 'p')].filter((p) => p.namespaceURI && p.namespaceURI.includes('drawingml'));
+          const texts = ps.map(paraText).filter((t) => t.trim());
+          if (!texts.length) continue;
+          if (isTitle && !title) title = texts.join(' ');
+          else if (texts.length > 1) body.push('<ul>' + texts.map((t) => `<li>${escapeHtml(t)}</li>`).join('') + '</ul>');
+          else body.push(`<p>${escapeHtml(texts[0])}</p>`);
+        } else if (el.localName === 'pic') {
+          const blip = el.getElementsByTagNameNS('*', 'blip')[0];
+          const target = blip && r[attr(blip, 'embed')];
+          const data = target && await zipDataUrl(zip, target);
+          if (data && /^data:image\/(png|jpe?g|gif|svg)/.test(data)) body.push(`<p><img src="${data}"></p>`);
+        } else if (el.localName === 'graphicFrame') {
+          const tbl = el.getElementsByTagNameNS('*', 'tbl')[0];
+          if (tbl) body.push('<table>' + [...tbl.getElementsByTagNameNS('*', 'tr')].map((tr) =>
+            '<tr>' + [...tr.getElementsByTagNameNS('*', 'tc')].map((tc) => `<td>${escapeHtml([...tc.getElementsByTagNameNS('*', 'p')].map(paraText).join(' '))}</td>`).join('') + '</tr>').join('') + '</table>');
+        }
+      }
+    };
+    if (tree) await walk(tree);
+    parts.push(`<h2>Слайд ${k + 1}${title ? '. ' + escapeHtml(title) : ''}</h2>\n${body.join('\n')}`);
+  }
+  return parts.join('\n<hr>\n');
+}
+
 /* =========================== ДОКУМЕНТЫ =========================== */
 
 function htmlPage(title, body) {
@@ -1031,6 +1461,9 @@ async function docToHtml(file, ext, onProgress, onStatus) {
     case 'epub': return epubToHtml(file);
     case 'fb2': return fb2ToHtml(await readText(file));
     case 'mobi': return mobiToHtml(file);
+    case 'rtf': return rtfToHtml(new TextDecoder('latin1').decode(new Uint8Array(await file.arrayBuffer())));
+    case 'odt': return odtToHtml(file);
+    case 'pptx': return pptxToHtml(file, onStatus);
   }
   throw new Error('Неизвестный формат документа.');
 }
@@ -1056,7 +1489,7 @@ async function htmlToPdf(html, title) {
   }
 }
 
-async function htmlToPdfText(html, title) {
+async function htmlToPdfText(html, title, opt = {}) {
   await loadLib('pdfmake');
   await loadLib('pdfmakeFonts');
   await loadLib('htmlToPdfmake');
@@ -1077,16 +1510,18 @@ async function htmlToPdfText(html, title) {
   const fit = (n) => {
     if (Array.isArray(n)) { n.forEach(fit); return; }
     if (!n || typeof n !== 'object') return;
-    if (n.image) { delete n.width; delete n.height; n.fit = [515, 700]; }
+    if (n.image) { delete n.width; delete n.height; n.fit = opt.landscape ? [760, 470] : [515, 700]; }
+    if (n.table) n.table.headerRows = n.table.body && n.table.body.length > 1 ? 1 : 0; // шапка таблицы на каждой странице
     for (const v of Object.values(n)) if (v && typeof v === 'object') fit(v);
   };
   fit(content);
   const dd = {
     info: { title },
     pageSize: 'A4',
+    pageOrientation: opt.landscape ? 'landscape' : 'portrait',
     pageMargins: [40, 40, 40, 40],
     content,
-    defaultStyle: { font: 'Roboto', fontSize: 11, lineHeight: 1.25 },
+    defaultStyle: { font: 'Roboto', fontSize: opt.fontSize || 11, lineHeight: 1.25 },
   };
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('pdfmake timeout')), 120000);
@@ -1453,6 +1888,12 @@ async function convertDoc(file, ext, target, opts, onProgress, onStatus, htmlOve
 
   // htmlOverride — текст, отредактированный пользователем в конвертере
   const html = htmlOverride ?? await docToHtml(file, ext, onProgress, onStatus);
+  // Word, RTF, ODT, книги… → JPG/PNG: сначала PDF, затем его страницы картинками
+  if (target === 'png' || target === 'jpg') {
+    onStatus('Вёрстка страниц…');
+    const pdf = await htmlToPdf(html, title);
+    return pagesToImages(new File([pdf], `${title}.pdf`), 'pdf', target, opts, onProgress, onStatus);
+  }
   switch (target) {
     case 'html': return new Blob([htmlPage(title, html)], { type: MIME.html });
     case 'txt': return new Blob([htmlToText(html)], { type: MIME.txt });
@@ -1549,10 +1990,11 @@ async function encodeMP3(buf, kbps, onProgress) {
   return new Blob(parts, { type: MIME.mp3 });
 }
 
-async function videoToWebm(file, onProgress) {
+/** Перекодирование видео (WEBM или MP4) записью воспроизведения — идёт в реальном времени */
+async function recordVideo(file, target, onProgress) {
   if (!window.MediaRecorder) throw new Error('Этот браузер не поддерживает запись видео.');
-  const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m));
-  if (!mime) throw new Error('Этот браузер не умеет кодировать WEBM.');
+  const mime = recordable(target === 'mp4' ? MP4_TYPES : WEBM_TYPES);
+  if (!mime) throw new Error(`Этот браузер не умеет сохранять видео в ${target.toUpperCase()}${target === 'mp4' ? ' — выберите WEBM или откройте сайт в Chrome/Edge/Safari' : ''}.`);
 
   const url = URL.createObjectURL(file);
   const video = document.createElement('video');
@@ -1585,7 +2027,7 @@ async function videoToWebm(file, onProgress) {
     rec.start(1000);
     await video.play();
     await done;
-    return new Blob(chunks, { type: MIME.webm });
+    return new Blob(chunks, { type: MIME[target] });
   } finally {
     video.pause();
     URL.revokeObjectURL(url);
@@ -1593,8 +2035,55 @@ async function videoToWebm(file, onProgress) {
   }
 }
 
-async function convertMedia(file, ext, target, opts, onProgress) {
-  if (target === 'webm') return videoToWebm(file, onProgress);
+/** Видео → анимированный GIF: 10 кадров/с, ширина до 480 px, первые 30 секунд */
+async function videoToGif(file, onProgress, onStatus) {
+  const url = URL.createObjectURL(file);
+  const video = document.createElement('video');
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.src = url;
+  try {
+    await new Promise((res, rej) => {
+      video.onloadeddata = res;
+      video.onerror = () => rej(new Error('Браузер не может открыть это видео (кодек не поддерживается).'));
+    });
+    const MAX_SEC = 30, FPS = 10;
+    // у WEBM, записанных браузером, длительность неизвестна (Infinity) — узнаём её перемоткой в самый конец
+    if (!isFinite(video.duration)) {
+      video.currentTime = 1e7;
+      await new Promise((r) => { video.onseeked = r; setTimeout(r, 3000); });
+      video.currentTime = 0;
+      await new Promise((r) => { video.onseeked = r; setTimeout(r, 3000); });
+    }
+    const dur = isFinite(video.duration) && video.duration > 0 ? video.duration : MAX_SEC;
+    const len = Math.min(dur, MAX_SEC);
+    const k = Math.min(1, 480 / (video.videoWidth || 480));
+    const w = Math.max(2, Math.round((video.videoWidth || 480) * k)), h = Math.max(2, Math.round((video.videoHeight || 270) * k));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const frames = [];
+    const total = Math.max(1, Math.floor(len * FPS));
+    for (let f = 0; f < total; f++) {
+      video.currentTime = Math.min(f / FPS, dur - 0.01);
+      await new Promise((r) => { video.onseeked = r; });
+      ctx.drawImage(video, 0, 0, w, h);
+      frames.push(ctx.getImageData(0, 0, w, h));
+      onStatus(`Кадр ${f + 1} из ${total}…`);
+      onProgress((f + 1) / total * 0.85);
+    }
+    onStatus('Сборка GIF…');
+    const blob = await encodeGIF(frames, w, h, 100 / FPS);
+    return { blob, ext: 'gif', note: dur > MAX_SEC ? `первые ${MAX_SEC} с из ${Math.round(dur)} с` : '' };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function convertMedia(file, ext, target, opts, onProgress, onStatus = () => {}) {
+  if (target === 'webm' || target === 'mp4') return recordVideo(file, target, onProgress);
+  if (target === 'gif') return videoToGif(file, onProgress, onStatus);
   const buf = await decodeAudio(file);
   onProgress(0.1);
   if (target === 'wav') return encodeWAV(buf);
@@ -1945,7 +2434,7 @@ function setProgress(item, p) {
 async function convertItem(item) {
   if (!item.cat || !item.target || item.status === 'work' || item.cat === 'archive') return;
   item.status = 'work';
-  item.workText = item.target === 'webm' ? 'Запись видео в реальном времени — не закрывайте вкладку…' : 'Конвертация…';
+  item.workText = (item.target === 'webm' || item.target === 'mp4') ? 'Запись видео в реальном времени — не закрывайте вкладку…' : 'Конвертация…';
   refreshRow(item);
   setProgress(item, null);
   const onProgress = (p) => setProgress(item, p);
@@ -1955,10 +2444,10 @@ async function convertItem(item) {
   try {
     let res;
     switch (item.cat) {
-      case 'image': res = await convertImage(file, canon(ext), target, opts); break;
+      case 'image': res = await convertImage(file, canon(ext), target, opts, onProgress, onStatus); break;
       case 'data':  res = await convertData(file, ext, target); break;
       case 'doc':   res = await convertDoc(file, ext, target, opts, onProgress, onStatus, item.editedHtml); break;
-      case 'media': res = await convertMedia(file, ext, target, opts, onProgress); break;
+      case 'media': res = await convertMedia(file, ext, target, opts, onProgress, onStatus); break;
       case 'cad':   res = await convertCad(item, onStatus); break;
     }
     const blob = res instanceof Blob ? res : res.blob;
