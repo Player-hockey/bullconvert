@@ -1052,3 +1052,147 @@ function wmfTextCharsets(buf) {
   }
   return out;
 }
+
+/**
+ * Оформление по ГОСТ 7.32 (отчёты, курсовые): поля 30/15/20/20 мм, Times New Roman 14, интервал 1,5,
+ * абзацный отступ 1,25 см, по ширине; в таблицах — 12 пт и одинарный интервал; рисунки по центру;
+ * нумерация страниц внизу по центру. Заголовки, списки и выравнивание по центру сохраняются.
+ */
+async function docxToGost(file) {
+  await loadLib('jszip');
+  const zip = await JSZip.loadAsync(file);
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const parse = async (p) => { const f = zip.file(p); return f ? new DOMParser().parseFromString(await f.async('string'), 'application/xml') : null; };
+  const save = (p, d) => zip.file(p, new XMLSerializer().serializeToString(d));
+  const K = (e, n) => { if (!e) return null; for (const c of e.children) if (c.localName === n) return c; return null; };
+  const el = (d, name, attrs = {}) => { const e = d.createElementNS(W, 'w:' + name); for (const [k, v] of Object.entries(attrs)) e.setAttributeNS(W, 'w:' + k, v); return e; };
+  // Word требует строгий порядок свойств — вставляем на своё место
+  const ORDER = {
+    rPr: ['rStyle', 'rFonts', 'b', 'bCs', 'i', 'iCs', 'caps', 'smallCaps', 'strike', 'dstrike', 'outline', 'shadow', 'emboss', 'imprint', 'noProof', 'snapToGrid', 'vanish', 'webHidden', 'color', 'spacing', 'w', 'kern', 'position', 'sz', 'szCs', 'highlight', 'u', 'effect', 'bdr', 'shd', 'fitText', 'vertAlign', 'rtl', 'cs', 'em', 'lang', 'eastAsianLayout', 'specVanish', 'oMath'],
+    pPr: ['pStyle', 'keepNext', 'keepLines', 'pageBreakBefore', 'framePr', 'widowControl', 'numPr', 'suppressLineNumbers', 'pBdr', 'shd', 'tabs', 'suppressAutoHyphens', 'kinsoku', 'wordWrap', 'overflowPunct', 'topLinePunct', 'autoSpaceDE', 'autoSpaceDN', 'bidi', 'adjustRightInd', 'snapToGrid', 'spacing', 'ind', 'contextualSpacing', 'mirrorIndents', 'suppressOverlap', 'jc', 'textDirection', 'textAlignment', 'textboxTightWrap', 'outlineLvl', 'divId', 'cnfStyle', 'rPr', 'sectPr', 'pPrChange'],
+    sectPr: ['headerReference', 'footerReference', 'footnotePr', 'endnotePr', 'type', 'pgSz', 'pgMar', 'paperSrc', 'pgBorders', 'lnNumType', 'pgNumType', 'cols', 'formProt', 'vAlign', 'noEndnote', 'titlePg', 'textDirection', 'bidi', 'rtlGutter', 'docGrid', 'printerSettings', 'sectPrChange'],
+    style: ['name', 'aliases', 'basedOn', 'next', 'link', 'autoRedefine', 'hidden', 'uiPriority', 'semiHidden', 'unhideWhenUsed', 'qFormat', 'locked', 'personal', 'personalCompose', 'personalReply', 'rsid', 'pPr', 'rPr', 'tblPr', 'trPr', 'tcPr', 'tblStylePr'],
+    docDefaults: ['rPrDefault', 'pPrDefault'],
+    r: ['rPr'], p: ['pPr'],
+  };
+  const put = (parent, child) => {
+    const order = ORDER[parent.localName];
+    const old = K(parent, child.localName);
+    if (old) old.remove();
+    if (!order) { parent.appendChild(child); return child; }
+    const idx = order.indexOf(child.localName);
+    const before = [...parent.children].find((c) => order.indexOf(c.localName) > idx || (idx >= 0 && order.indexOf(c.localName) < 0 && ['r', 'p'].includes(parent.localName)));
+    if (before) parent.insertBefore(child, before); else parent.appendChild(child);
+    return child;
+  };
+  const ensure = (d, parent, name) => K(parent, name) || put(parent, el(d, name));
+  const setFont = (d, rPr, sz) => {
+    put(rPr, el(d, 'rFonts', { ascii: 'Times New Roman', hAnsi: 'Times New Roman', cs: 'Times New Roman', eastAsia: 'Times New Roman' }));
+    if (sz) { put(rPr, el(d, 'sz', { val: String(sz) })); put(rPr, el(d, 'szCs', { val: String(sz) })); }
+    const col = K(rPr, 'color');
+    if (col && !/^(auto|000000)$/i.test(col.getAttributeNS(W, 'val') || '')) col.remove(); // цветной текст — чёрным
+  };
+
+  /* ---- стили ---- */
+  const styles = await parse('word/styles.xml');
+  const headingIds = new Set();
+  if (styles) {
+    const root = styles.documentElement;
+    let dd = K(root, 'docDefaults');
+    if (!dd) { dd = el(styles, 'docDefaults'); root.insertBefore(dd, root.firstElementChild); }
+    setFont(styles, ensure(styles, ensure(styles, dd, 'rPrDefault'), 'rPr'), 28);
+    put(ensure(styles, ensure(styles, dd, 'pPrDefault'), 'pPr'), el(styles, 'spacing', { before: '0', after: '0', line: '360', lineRule: 'auto' }));
+    for (const s of [...root.getElementsByTagNameNS(W, 'style')]) {
+      const type = s.getAttributeNS(W, 'type');
+      if (type !== 'paragraph' && type !== 'character') continue;
+      const name = (K(s, 'name') && K(s, 'name').getAttributeNS(W, 'val')) || '';
+      const isHeading = type === 'paragraph' && (/^heading|заголовок|^title/i.test(name) || !!K(K(s, 'pPr'), 'outlineLvl'));
+      if (isHeading) headingIds.add(s.getAttributeNS(W, 'styleId'));
+      const def = s.getAttributeNS(W, 'default') === '1';
+      const rp = ensure(styles, s, 'rPr');
+      // заголовки: тот же шрифт, полужирный, 16 пт (первый уровень) или 14 пт, чёрный цвет
+      setFont(styles, rp, isHeading ? (/(^heading ?1$)|(заголовок ?1$)|^title/i.test(name) ? 32 : 28) : (def ? 28 : null));
+      if (isHeading) put(rp, el(styles, 'b'));
+      if (type === 'paragraph' && def) {
+        const pp = ensure(styles, s, 'pPr');
+        put(pp, el(styles, 'spacing', { before: '0', after: '0', line: '360', lineRule: 'auto' }));
+        put(pp, el(styles, 'ind', { firstLine: '709' }));
+        put(pp, el(styles, 'jc', { val: 'both' }));
+      }
+    }
+    save('word/styles.xml', styles);
+  }
+
+  /* ---- текст документа ---- */
+  const doc = await parse('word/document.xml');
+  if (!doc) throw new Error('Повреждённый DOCX.');
+  const body = doc.getElementsByTagNameNS(W, 'body')[0];
+  for (const p of [...body.getElementsByTagNameNS(W, 'p')]) {
+    let anc = p.parentNode, where = 'body';
+    while (anc && anc !== body) { if (anc.localName === 'tbl') { where = 'table'; break; } if (anc.localName === 'txbxContent') { where = 'box'; break; } anc = anc.parentNode; }
+    if (where === 'box') continue; // надписи не трогаем
+    const tbl = where === 'table';
+    const pPr = ensure(doc, p, 'pPr');
+    const styleId = K(pPr, 'pStyle') && K(pPr, 'pStyle').getAttributeNS(W, 'val');
+    const heading = headingIds.has(styleId) || !!K(pPr, 'outlineLvl');
+    const list = !!K(pPr, 'numPr');
+    const picture = p.getElementsByTagNameNS('*', 'drawing').length + p.getElementsByTagNameNS('*', 'pict').length > 0 && !p.textContent.trim();
+    const jc = K(pPr, 'jc') && K(pPr, 'jc').getAttributeNS(W, 'val');
+    put(pPr, el(doc, 'spacing', tbl ? { before: '0', after: '0', line: '240', lineRule: 'auto' } : heading ? { before: '240', after: '240', line: '360', lineRule: 'auto' } : { before: '0', after: '0', line: '360', lineRule: 'auto' }));
+    // в ячейках таблиц абзацный отступ и «по ширине» из основного стиля не нужны
+    if (tbl) {
+      if (!K(pPr, 'ind')) put(pPr, el(doc, 'ind', { firstLine: '0' }));
+      if (!jc) put(pPr, el(doc, 'jc', { val: 'left' }));
+    }
+    if (!tbl && !list && !heading) {
+      const ind = K(pPr, 'ind'); if (ind) ind.remove();
+      if (!picture && jc !== 'center' && jc !== 'right') put(pPr, el(doc, 'ind', { firstLine: '709' }));
+      if (picture) put(pPr, el(doc, 'jc', { val: 'center' }));
+      else if (!jc || jc === 'left' || jc === 'start') put(pPr, el(doc, 'jc', { val: 'both' }));
+    }
+    // шрифт и размер у каждого фрагмента текста (жирный, курсив, индексы сохраняются)
+    for (const r of [...p.getElementsByTagNameNS(W, 'r')]) {
+      const rPr = ensure(doc, r, 'rPr');
+      const f = K(rPr, 'rFonts');
+      if (f && /symbol|wingdings|math/i.test(f.getAttributeNS(W, 'ascii') || f.getAttributeNS(W, 'hAnsi') || '')) continue;
+      setFont(doc, rPr, tbl ? 24 : heading ? null : 28);
+    }
+    const mark = K(pPr, 'rPr');
+    if (mark) setFont(doc, mark, tbl ? 24 : heading ? null : 28);
+  }
+
+  /* ---- страница и нумерация ---- */
+  const sects = [...body.getElementsByTagNameNS(W, 'sectPr')];
+  let last = sects.find((x) => x.parentNode === body);
+  if (!last) { last = el(doc, 'sectPr'); body.appendChild(last); sects.push(last); }
+  for (const s of sects) {
+    const sz = K(s, 'pgSz');
+    const land = sz && sz.getAttributeNS(W, 'orient') === 'landscape';
+    put(s, el(doc, 'pgSz', land ? { w: '16838', h: '11906', orient: 'landscape' } : { w: '11906', h: '16838' }));
+    put(s, el(doc, 'pgMar', { top: '1134', right: '850', bottom: '1134', left: '1701', header: '709', footer: '709', gutter: '0' }));
+  }
+  if (!K(last, 'footerReference')) {
+    const run = (inner) => `<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="24"/></w:rPr>${inner}</w:r>`;
+    zip.file('word/footer_gost.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:ftr xmlns:w="${W}"><w:p><w:pPr><w:jc w:val="center"/></w:pPr>${run('<w:fldChar w:fldCharType="begin"/>')}${run('<w:instrText xml:space="preserve"> PAGE </w:instrText>')}${run('<w:fldChar w:fldCharType="separate"/>')}${run('<w:t>1</w:t>')}${run('<w:fldChar w:fldCharType="end"/>')}</w:p></w:ftr>`);
+    const relsPath = 'word/_rels/document.xml.rels';
+    const rels = await parse(relsPath);
+    const rel = rels.createElementNS(rels.documentElement.namespaceURI, 'Relationship');
+    rel.setAttribute('Id', 'rIdGostFooter');
+    rel.setAttribute('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer');
+    rel.setAttribute('Target', 'footer_gost.xml');
+    rels.documentElement.appendChild(rel);
+    save(relsPath, rels);
+    const ct = await parse('[Content_Types].xml');
+    const ov = ct.createElementNS(ct.documentElement.namespaceURI, 'Override');
+    ov.setAttribute('PartName', '/word/footer_gost.xml');
+    ov.setAttribute('ContentType', 'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml');
+    ct.documentElement.appendChild(ov);
+    save('[Content_Types].xml', ct);
+    const ref = el(doc, 'footerReference', { type: 'default' });
+    ref.setAttributeNS(R, 'r:id', 'rIdGostFooter');
+    last.insertBefore(ref, last.firstElementChild);
+  }
+  save('word/document.xml', doc);
+  return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+}

@@ -88,13 +88,14 @@ function targetsFor(cat, ext) {
     case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'spdf', 'nobg', 'gif', 'tiff', 'bmp', 'ico', 'txt', 'docx', 'xlsx']);
     case 'data':  return not(['pdf', 'xlsx', 'docx', 'csv', 'tsv', 'json', 'yaml', 'xml', 'html', 'md']);
     case 'doc':
-      if (ext === 'pdf') return ['docx', 'spdf', 'xlsx', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
+      if (ext === 'pdf') return ['docx', 'gost', 'spdf', 'xlsx', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
       if (canon(ext) === 'djvu') return ['pdf', 'spdf', 'png', 'jpg', 'docx', 'txt', 'md', 'html', 'epub', 'fb2'];
       // слайды рисуются в браузере; на компьютере владельца с Office — ещё и точно через PowerPoint/Word
       if (canon(ext) === 'pptx') return ['pdf', 'jpg', 'docx', 'txt', 'md', 'html'];
       if (canon(ext) === 'ppt') return ['pdf', ...(pcFeatures && officeAvailable ? ['pptx', 'jpg'] : []), 'docx', 'txt', 'md', 'html'];
-      if (canon(ext) === 'doc') return ['pdf', 'docx', ...(pcFeatures && officeAvailable ? ['rtf', 'odt'] : []), 'txt', 'html', 'md', 'epub', 'fb2'];
-      return not(['pdf', 'docx', 'png', 'jpg', 'epub', 'fb2', 'html', 'md', 'txt']);
+      if (canon(ext) === 'doc') return ['pdf', 'docx', 'gost', ...(pcFeatures && officeAvailable ? ['rtf', 'odt'] : []), 'txt', 'html', 'md', 'epub', 'fb2'];
+      // «DOCX по ГОСТ» — для документов, которые сдают как отчёт (не для книг)
+      return not(['pdf', 'docx', ...(['epub', 'fb2', 'mobi'].includes(canon(ext)) ? [] : ['gost']), 'png', 'jpg', 'epub', 'fb2', 'html', 'md', 'txt']);
     case 'media':
       if (VIDEO_EXT.includes(ext)) return not([...(recordable(MP4_TYPES) ? ['mp4'] : []), 'webm', 'gif', 'mp3', 'wav', 'frames']);
       return not(['mp3', 'wav']);
@@ -114,6 +115,7 @@ const TARGET_LABELS = {
   nobg: 'PNG без фона',
   frames: 'Кадры JPG (ZIP)',
   spdf: 'PDF с поиском (распознать текст)',
+  gost: 'DOCX по ГОСТ (поля, шрифт 14, интервал 1,5)',
 };
 const targetLabel = (t) => TARGET_LABELS[t] || t.toUpperCase();
 
@@ -765,6 +767,14 @@ async function convertData(file, ext, target) {
   const title = baseOf(file.name);
   let text;
 
+  // XLSX → PDF: вёрстка как в Excel (ширины, объединения, границы, заливка, шрифты)
+  if (ext === 'xlsx' && target === 'pdf' && typeof xlsxToPdf === 'function') {
+    try {
+      const { blob, skipped } = await xlsxToPdf(file, () => {});
+      return skipped ? { blob, ext: 'pdf', warn: '⚠ диаграммы и картинки листа не перенесены' } : blob;
+    } catch (e) { console.warn('Вёрстка XLSX не удалась, делаю простую таблицу:', e); }
+  }
+
   // Таблицы, JSON, XML → PDF / Word
   if (target === 'pdf' || target === 'docx') {
     let html, wide = 0;
@@ -848,6 +858,36 @@ async function ocrCanvas(canvas, onStatus, onFraction) {
 }
 
 /**
+ * Страница-скан в PDF: картинка на всю страницу, поверх — невидимый распознанный текст на тех же местах.
+ * worker = null — без распознавания. size — { width, height } в pt, иначе A4 по ширине.
+ */
+async function addScanPage(out, font, c, worker, size, onFrac = () => {}) {
+  let data = null;
+  if (worker) {
+    ocrLogger = (m) => { if (m.status === 'recognizing text') onFrac(m.progress); };
+    try { ({ data } = await worker.recognize(c, {}, { text: true, blocks: true })); } finally { ocrLogger = null; }
+  }
+  const wPt = size ? size.width : 595.28, hPt = size ? size.height : wPt * c.height / c.width;
+  const k = wPt / c.width;
+  const jpg = await out.embedJpg(await (await canvasToBlob(c, 'image/jpeg', 0.85)).arrayBuffer());
+  const page = out.addPage([wPt, hPt]);
+  page.drawImage(jpg, { x: 0, y: 0, width: wPt, height: hPt });
+  if (!data || !font) return page;
+  const words = data.words || (data.blocks || []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines.flatMap((l) => l.words)));
+  for (const w of words) {
+    const t = (w.text || '').trim();
+    if (!t || w.confidence < 20) continue;
+    const { x0, x1, y0, y1 } = w.bbox;
+    const bw = (x1 - x0) * k, bh = (y1 - y0) * k;
+    if (bw <= 0 || bh <= 0) continue;
+    let sz = bh * 0.95;
+    try { const w1 = font.widthOfTextAtSize(t, 1); if (w1 > 0) sz = Math.min(sz * 1.3, bw / w1); } catch { continue; }
+    try { page.drawText(t, { x: x0 * k, y: hPt - y1 * k + bh * 0.15, size: Math.max(1, sz), font, opacity: 0 }); } catch { /* символ не из шрифта */ }
+  }
+  return page;
+}
+
+/**
  * «PDF с поиском»: сканы и фото → PDF, в котором текст можно искать, выделять и копировать.
  * Страница — картинка, поверх неё невидимый распознанный текст на тех же местах.
  * У PDF страницы, где текст уже есть, копируются без изменений.
@@ -888,29 +928,10 @@ async function searchablePdf(file, ext, onProgress, onStatus) {
     }
     onStatus(`Распознавание текста: страница ${i + 1} из ${pages.length}…`);
     const c = await pg.canvas();
-    ocrLogger = (m) => { if (m.status === 'recognizing text') onProgress((i + m.progress) / pages.length); };
-    let data;
-    try { ({ data } = await worker.recognize(c, {}, { text: true, blocks: true })); } finally { ocrLogger = null; }
-    recognized++;
     // размер страницы: как у исходного PDF, иначе A4 по ширине картинки
-    let wPt, hPt;
-    if (srcDoc) ({ width: wPt, height: hPt } = srcDoc.getPage(i).getSize());
-    else { wPt = 595.28; hPt = wPt * c.height / c.width; }
-    const k = wPt / c.width;
-    const jpg = await out.embedJpg(await (await canvasToBlob(c, 'image/jpeg', 0.85)).arrayBuffer());
-    const page = out.addPage([wPt, hPt]);
-    page.drawImage(jpg, { x: 0, y: 0, width: wPt, height: hPt });
-    const words = data.words || (data.blocks || []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines.flatMap((l) => l.words)));
-    for (const w of words) {
-      const t = (w.text || '').trim();
-      if (!t || w.confidence < 20) continue;
-      const { x0, y0, x1, y1 } = w.bbox;
-      const bw = (x1 - x0) * k, bh = (y1 - y0) * k;
-      if (bw <= 0 || bh <= 0) continue;
-      let size = bh * 0.95;
-      try { const w1 = font.widthOfTextAtSize(t, 1); if (w1 > 0) size = Math.min(size * 1.3, bw / w1); } catch { continue; }
-      try { page.drawText(t, { x: x0 * k, y: hPt - y1 * k + bh * 0.15, size: Math.max(1, size), font, opacity: 0 }); } catch { /* символ не из шрифта */ }
-    }
+    const size = srcDoc ? srcDoc.getPage(i).getSize() : null;
+    await addScanPage(out, font, c, worker, size, (f) => onProgress((i + f) / pages.length));
+    recognized++;
     c.width = c.height = 0;
     onProgress((i + 1) / pages.length);
   }
@@ -2712,6 +2733,18 @@ async function convertDoc(file, ext, target, opts, onProgress, onStatus, htmlOve
     }
   }
 
+  // «DOCX по ГОСТ»: сначала DOCX (из Word — как есть, из остального — через текст), затем оформление
+  if (target === 'gost') {
+    let docxBlob = c === 'docx' && !htmlOverride ? file : null;
+    if (!docxBlob) {
+      let h = htmlOverride ?? await docToHtml(file, ext, onProgress, onStatus);
+      if (typeof mathToImages === 'function') h = await mathToImages(h);
+      docxBlob = await htmlToDocx(h);
+    }
+    onStatus('Оформление по ГОСТ…');
+    return { blob: await docxToGost(docxBlob), ext: 'docx', suffix: ' (ГОСТ)', note: 'поля 30/15/20/20, Times New Roman 14, интервал 1,5' };
+  }
+
   // htmlOverride — текст, отредактированный пользователем в конвертере
   let html = htmlOverride ?? await docToHtml(file, ext, onProgress, onStatus);
   // формулы: в HTML остаются настоящими (MathML), в TXT/Markdown — линейной записью, в остальных — картинками
@@ -3430,7 +3463,7 @@ async function convertItem(item) {
     }
     const blob = res instanceof Blob ? res : res.blob;
     const outExt = res instanceof Blob ? target : res.ext;
-    item.result = { blob, name: `${item.outBase}.${outExt}`, path: item.path, note: res.note, warn: res.warn };
+    item.result = { blob, name: `${item.outBase}${res.suffix || ''}.${outExt}`, path: item.path, note: res.note, warn: res.warn };
     item.status = 'done';
     if (typeof addHistory === 'function') addHistory(item.result).catch(() => {});
   } catch (e) {

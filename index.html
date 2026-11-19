@@ -117,10 +117,13 @@
       <button class="tab" data-tab="pages">Страницы и разделение</button>
       <button class="tab" data-tab="compress">Сжать PDF</button>
       <button class="tab" data-tab="edit">Текст и подпись</button>
+      <button class="tab" data-tab="form">Заполнить бланк</button>
       <button class="tab" data-tab="stamp">Номера и водяной знак</button>
       <button class="tab" data-tab="protect">Пароль</button>
       <button class="tab" data-tab="redact">Скрыть данные</button>
+      <button class="tab" data-tab="scan">Скан документов</button>
       <button class="tab" data-tab="collage">Склеить фото</button>
+      <button class="tab" data-tab="compare">Сравнить</button>
     </nav>
     <div id="toolBody"></div>
   </dialog>
@@ -157,6 +160,7 @@
       <button class="btn sm" id="imgFlip" title="Отразить">⇋</button>
       <button class="btn sm" id="imgCropReset">Сбросить обрезку</button>
       <button class="btn sm" id="imgBg">✨ Убрать фон</button>
+      <button class="btn sm" id="imgSheet" title="Найти лист на фото и выпрямить перспективу">📐 Выровнять лист</button>
       <button class="btn sm" id="imgScan" title="Фото листа бумаги → чистый чёрно-белый скан: убираются тени и неровный свет">📄 Скан документа</button>
       <button class="btn sm" id="imgLight" title="Убрать тени и выровнять освещение, сохранив цвета">☀ Выровнять свет</button>
       <label class="mini">Ширина, px <input type="number" id="imgW" min="16" placeholder="авто"></label>
@@ -202,7 +206,10 @@
   <script src="office.js"></script>
   <script src="docx.js"></script>
   <script src="math.js"></script>
+  <script src="xlsx.js"></script>
   <script src="pdftools.js"></script>
+  <script src="sign.js"></script>
   <script src="extras.js"></script>
+  <script src="scan.js"></script>
 </body>
 </html>

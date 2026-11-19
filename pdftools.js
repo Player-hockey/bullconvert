@@ -95,7 +95,7 @@ async function zipBlobs(files) {
 
 /* ============================ Окно инструментов ============================ */
 
-const T = { tab: 'merge', merge: [], pages: null, edit: null, redact: null, compress: null, stamp: null, protect: null, collage: [] };
+const T = { tab: 'merge', merge: [], pages: null, edit: null, redact: null, compress: null, stamp: null, protect: null, collage: [], form: null, compare: { a: null, b: null } };
 
 function openTools(tab = 'merge', file = null) {
   const dlg = $('toolsDlg');
@@ -110,6 +110,7 @@ function switchTab(tab) {
   ({
     merge: renderMerge, pages: renderPages, edit: () => renderViewerTab('edit'), redact: () => renderViewerTab('redact'),
     compress: renderCompress, stamp: renderStamp, protect: renderProtect, collage: renderCollage,
+    form: () => renderForm(), compare: () => renderCompare(), scan: () => renderScanTool(),
   })[tab]();
 }
 
@@ -135,9 +136,10 @@ async function loadToolFile(tab, file) {
   try {
     if (tab === 'merge') { T.merge.push(file); renderMerge(); return; }
     if (tab === 'collage') { T.collage.push(file); renderCollage(); return; }
+    if (tab === 'scan') { T.scan.push(file); renderScanTool(); return; }
     const bytes = await readBytes(file);
     // эти вкладки работают с байтами PDF напрямую (в том числе с запароленными)
-    if (tab === 'compress' || tab === 'stamp' || tab === 'protect') {
+    if (tab === 'compress' || tab === 'stamp' || tab === 'protect' || tab === 'form') {
       T[tab] = { name: file.name, base: baseOf(file.name), bytes };
       switchTab(tab);
       return;
@@ -407,6 +409,7 @@ function renderViewerTab(kind) {
     ? `<span class="seg"><button class="btn sm tool-t active" data-tool="move" title="Двигать объекты">✋</button>
          <button class="btn sm tool-t" data-tool="text">T Текст</button>
          <button class="btn sm tool-t" data-tool="image">🖼 Картинка / подпись</button>
+         <button class="btn sm" id="sigDraw" title="Нарисовать подпись мышью или пальцем">✍ Нарисовать подпись</button>
          <button class="btn sm tool-t" data-tool="hl">🖍 Маркер</button></span>
        <label class="mini">Размер <input type="number" id="tSize" min="6" max="96" value="14"></label>
        <label class="mini">Цвет <input type="color" id="tColor" value="#1b1f24"></label>
@@ -435,6 +438,14 @@ function renderViewerTab(kind) {
         body.querySelectorAll('.tool-t').forEach((x) => x.classList.toggle('active', x === b));
       };
     });
+    $('sigDraw').onclick = async () => {
+      const sig = await drawSignature();
+      if (!sig) return;
+      st.pendingImage = sig;
+      st.tool = 'image';
+      body.querySelectorAll('.tool-t').forEach((x) => x.classList.toggle('active', x.dataset.tool === 'image'));
+      toolMsg('Нажмите на страницу, куда поставить подпись. Потом её можно двигать.');
+    };
     $('imgPick').onchange = async (e) => {
       const f = e.target.files[0];
       if (!f) return;
