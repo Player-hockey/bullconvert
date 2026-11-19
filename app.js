@@ -32,6 +32,9 @@ const CDN = {
   pako:        'https://cdn.jsdelivr.net/npm/pako@1.0.11/dist/pako.min.js',
   utif:        'https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js',
   omggif:      'https://cdn.jsdelivr.net/npm/omggif@1.0.10/omggif.js',
+  // векторные картинки Windows (WMF/EMF): формулы и схемы в документах Word
+  wmf:         'https://cdn.jsdelivr.net/npm/rtf.js@3.0.9/dist/WMFJS.bundle.min.js',
+  emf:         'https://cdn.jsdelivr.net/npm/rtf.js@3.0.9/dist/EMFJS.bundle.min.js',
 };
 
 const libPromises = {};
@@ -2011,6 +2014,17 @@ async function convertDoc(file, ext, target, opts, onProgress, onStatus, htmlOve
   if ((c === 'pdf' || c === 'djvu') && (target === 'png' || target === 'jpg')) return pagesToImages(file, c, target, opts, onProgress, onStatus);
   if (c === 'pdf' && target === 'xlsx') return pdfToXlsx(file, onProgress, onStatus);
   if (c === 'djvu' && target === 'pdf' && !htmlOverride) return pagesToPdf(file, c, opts, onProgress, onStatus);
+  // DOCX → PDF/картинки: вёрстка прямо по разметке Word (поля, отступы, таблицы, шрифты как в документе)
+  if (c === 'docx' && !htmlOverride && ['pdf', 'png', 'jpg'].includes(target)) {
+    try {
+      const { blob, skippedImages } = await docxToPdf(file, onStatus);
+      const warn = skippedImages ? `⚠ не перенесено картинок: ${skippedImages} (формат EMF/WMF)` : undefined;
+      if (target === 'pdf') return warn ? { blob, ext: 'pdf', warn } : blob;
+      return pagesToImages(new File([blob], `${title}.pdf`), 'pdf', target, opts, onProgress, onStatus);
+    } catch (e) {
+      console.warn('Прямая вёрстка DOCX не удалась, делаю через HTML:', e);
+    }
+  }
 
   // htmlOverride — текст, отредактированный пользователем в конвертере
   const html = htmlOverride ?? await docToHtml(file, ext, onProgress, onStatus);
@@ -2361,9 +2375,14 @@ async function serverPost(path, file) {
  * отправляем все CAD-файлы из той же папки/архива — КОМПАС найдёт их рядом.
  */
 // Что Office (Word/PowerPoint) на компьютере владельца делает точнее браузера
-const OFFICE_EXACT = { doc: ['pdf', 'docx', 'rtf', 'odt', 'txt'], ppt: ['pdf', 'pptx', 'jpg'], pptx: ['pdf', 'jpg'] };
+const OFFICE_EXACT = { doc: ['pdf', 'docx', 'rtf', 'odt', 'txt'], ppt: ['pdf', 'pptx', 'jpg'], pptx: ['pdf', 'jpg'], docx: ['pdf'], rtf: ['pdf'], odt: ['pdf'] };
 // Что умеет браузер сам — запасной путь, если Office занят, задал вопрос или не установлен
-const BROWSER_OK = { doc: ['pdf', 'docx', 'txt'], ppt: ['pdf'], pptx: ['pdf', 'jpg'] };
+const BROWSER_OK = { doc: ['pdf', 'docx', 'txt'], ppt: ['pdf'], pptx: ['pdf', 'jpg'], docx: ['pdf'], rtf: ['pdf'], odt: ['pdf'] };
+// Word/PowerPoint ждёт ответа на вопрос на экране — полчаса не обращаемся к этой программе,
+// чтобы не ждать каждый раз (запоминается и после перезагрузки страницы)
+const officeApp = (c) => (['ppt', 'pptx'].includes(c) ? 'powerpoint' : 'word');
+const officeBlocked = (app) => { try { return Date.now() < +(localStorage.getItem('bcOfficeBlocked_' + app) || 0); } catch { return false; } };
+const setOfficeBlocked = (app) => { try { localStorage.setItem('bcOfficeBlocked_' + app, String(Date.now() + 30 * 60 * 1000)); } catch { /* приватный режим */ } };
 
 /** Документы: старые DOC/PPT и слайды PPTX — сначала через Office (если есть), иначе или при сбое — в браузере */
 async function convertDocument(item, opts, onProgress, onStatus) {
@@ -2372,17 +2391,21 @@ async function convertDocument(item, opts, onProgress, onStatus) {
   const browser = () => (c === 'pptx' && (target === 'pdf' || target === 'jpg') && !item.editedHtml
     ? slidesConvert(file, target, opts, onProgress, onStatus)
     : convertDoc(file, ext, target, opts, onProgress, onStatus, item.editedHtml));
-  const viaOffice = pcFeatures && officeAvailable && !item.editedHtml && (OFFICE_EXACT[c] || []).includes(target);
+  const app = officeApp(c);
+  const canBrowser = (BROWSER_OK[c] || []).includes(target);
+  const viaOffice = pcFeatures && officeAvailable && !item.editedHtml && (OFFICE_EXACT[c] || []).includes(target) && !(canBrowser && officeBlocked(app));
   if (!viaOffice) return browser();
   try {
     return await convertOffice(item, onStatus);
   } catch (e) {
-    if (!(BROWSER_OK[c] || []).includes(target)) throw e;
+    if (e && e.message === SERVER_ERRORS.OFFICE_BLOCKED) setOfficeBlocked(app);
+    if (!canBrowser) throw e;
     console.warn('Office не справился — конвертирую в браузере:', e);
     onStatus('Office не ответил — конвертирую в браузере…');
     setProgress(item, null);
     const r = await browser();
-    const warn = '⚠ без Office: оформление упрощённое';
+    // DOCX браузер верстает почти как Word; у старых форматов оформление проще
+    const warn = c === 'docx' ? 'ℹ Word не ответил — PDF собран в BullConvert' : '⚠ без Office: оформление упрощённое';
     return r instanceof Blob ? { blob: r, ext: target, warn } : { ...r, warn: r.warn ? `${r.warn}; ${warn}` : warn };
   }
 }
@@ -2944,6 +2967,14 @@ async function prepareOffline() {
     for (let i = 0; i < names.length; i++) {
       out.textContent = `Скачиваю модули: ${i + 1} из ${names.length}…`;
       try { if (names[i] === 'pdfjs') await getPdfJs(); else await loadLib(names[i]); } catch { /* модуль не критичен */ }
+    }
+    // шрифты для точного PDF из Word (как Times New Roman, Arial, Calibri, Courier)
+    if (typeof docxFontUrl === 'function') {
+      const fonts = Object.keys(DOCX_FONTS).flatMap((fam) => Object.keys(DOCX_FONT_STYLES).map((st) => docxFontUrl(fam, st)));
+      for (let i = 0; i < fonts.length; i++) {
+        out.textContent = `Скачиваю шрифты документов: ${i + 1} из ${fonts.length}…`;
+        try { await fetch(fonts[i]); } catch { /* шрифт не критичен */ }
+      }
     }
     out.textContent = 'Скачиваю распознавание текста (≈20 МБ, один раз)…';
     await getOcrWorker();

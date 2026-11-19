@@ -80,6 +80,10 @@ const I18N_RULES = [
   [/^(\d+) стр\.$/, '$1 pages'], [/^(\d+) кадров$/, '$1 frames'], [/^(\d+) лист\(ов\)$/, '$1 sheet(s)'],
   [/^стр\. (\d+) из (\d+)$/, 'page $1 of $2'], [/^Итог: (\d+) × (\d+) px(.*)$/, 'Result: $1 × $2 px$3'],
   [/^✂ Обрезка (.*)$/, '✂ Trim $1'], [/^Слайд (\d+) из (\d+)…$/, 'Slide $1 of $2…'], [/^Слайдов: (\d+)$/, 'Slides: $1'],
+  [/^Загрузка шрифта (\w+)…$/, 'Loading font $1…'], [/^Скачиваю шрифты документов: (\d+) из (\d+)…$/, 'Downloading document fonts: $1 of $2…'],
+  [/^Надписи и рисунки поверх текста…$/, 'Placing text boxes and floating pictures…'],
+  [/^ℹ Word не ответил — PDF собран в BullConvert$/, 'ℹ Word did not respond — PDF made by BullConvert'],
+  [/^⚠ не перенесено картинок: (\d+) \(формат EMF\/WMF\)$/, '⚠ images not transferred: $1 (EMF/WMF format)'],
   [/^⚠ не нарисовано (.*)$/, (m, x) => '⚠ not drawn: ' + x.replace('диаграмм', 'charts').replace('картинок', 'images')], [/^(\d+) стр\. в ZIP$/, '$1 pages in ZIP'],
 ];
 
