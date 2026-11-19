@@ -453,9 +453,22 @@ async function docxToPdf(file, onStatus) {
             await walk(el); break;
           case 'sdt': await walk(K(el, 'sdtContent') || el); break;
           case 'oMathPara': case 'oMath': {
-            // формулы Word: выводим текст формулы как есть
-            const t = [...el.getElementsByTagNameNS('*', 't')].map((x) => x.textContent).join('');
-            if (visible()) addText(t, { ...baseR, i: true, font: 'Cambria Math' });
+            if (!visible()) break;
+            // формулы Word: простые (индексы, степени) — текстом в строке, двумерные (дроби, корни, суммы) — картинкой
+            const block = el.localName === 'oMathPara';
+            const size = (baseR.sz ?? 24) / 2;
+            if (!block && typeof ommlIsComplex === 'function' && !ommlIsComplex(el)) {
+              for (const r of ommlToRuns(el)) addText(r.text, { ...baseR, i: /^[A-Za-zα-ωΑ-Ω]$/.test(r.text.trim()) || undefined, va: r.va });
+              break;
+            }
+            const png = typeof ommlToMathML === 'function' ? await mathmlToPng(ommlToMathML(el, block), size) : null;
+            if (png) {
+              if (runs.length) flush();
+              parts.push({ image: png.url, width: png.w, height: png.h, align: block ? 'center' : null, formula: true });
+            } else {
+              const t = typeof ommlToRuns === 'function' ? ommlToRuns(el) : [{ text: [...el.getElementsByTagNameNS('*', 't')].map((x) => x.textContent).join('') }];
+              for (const r of t) addText(r.text, { ...baseR, va: r.va });
+            }
             break;
           }
           case 'AlternateContent': await graphic(el, baseR); break;
@@ -576,7 +589,7 @@ async function docxToPdf(file, onStatus) {
         // картинка не может быть шире колонки и выше страницы — иначе вёрстка PDF зацикливается
         const maxW = Math.max(10, (cell ? cell.width : contentW) - left - right);
         const maxH = Math.max(10, contentH - 6);
-        const n = { image: part.image, margin: [left, 0, right, 0], alignment: align === 'justify' ? 'left' : align };
+        const n = { image: part.image, margin: [left, part.formula ? 3 : 0, right, part.formula ? 3 : 0], alignment: part.align || (align === 'justify' ? 'left' : align) };
         if (w > 0.5 && h > 0.5) {
           const k = Math.min(1, maxW / w, maxH / h);
           n.width = w * k; n.height = h * k;

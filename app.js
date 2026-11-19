@@ -85,7 +85,7 @@ function targetsFor(cat, ext) {
   const not = (list) => list.filter((t) => t !== canon(ext));
   switch (cat) {
     // txt/docx у фото — распознавание текста со снимка
-    case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'spdf', 'nobg', 'gif', 'tiff', 'bmp', 'ico', 'txt', 'docx']);
+    case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'spdf', 'nobg', 'gif', 'tiff', 'bmp', 'ico', 'txt', 'docx', 'xlsx']);
     case 'data':  return not(['pdf', 'xlsx', 'docx', 'csv', 'tsv', 'json', 'yaml', 'xml', 'html', 'md']);
     case 'doc':
       if (ext === 'pdf') return ['docx', 'spdf', 'xlsx', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
@@ -962,6 +962,202 @@ async function* pdfPages(file, width = 1700) {
  * (по межстрочным интервалам, отступам и концам строк), крупный текст — заголовки, жирный шрифт,
  * выравнивание по центру, списки, перенос слов, картинки на своих местах.
  */
+/**
+ * Таблицы с рамками на странице PDF: по линиям (тонкие прямоугольники и отрезки) строим сетку,
+ * находим объединённые ячейки и раскладываем текст по ячейкам.
+ * items — куски текста { str, x, y (сверху вниз, базовая линия), w, size, bold }.
+ * Возвращает { tables: [{ x0, y0, x1, y1, rows: [[{ html, text, colspan, rowspan } | null]] }], rest: items вне таблиц }
+ */
+function pdfRuledTables(ops, H, items) {
+  if (!ops) return { tables: [], rest: items };
+  const { hs, vs } = pdfSegments(ops, H);
+  return gridTables(hs, vs, items);
+}
+
+/** Линии страницы PDF (горизонтальные hs: {y,a,b}, вертикальные vs: {x,a,b}), координаты сверху вниз */
+function pdfSegments(ops, H) {
+  const OPS = pdfjsLib.OPS;
+  const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+  const pt = (m, x, y) => [m[0] * x + m[2] * y + m[4], H - (m[1] * x + m[3] * y + m[5])];
+  const hs = [], vs = [];
+  const seg = (a, b) => {
+    const [x0, y0] = a, [x1, y1] = b;
+    if (Math.abs(y1 - y0) < 1.2 && Math.abs(x1 - x0) > 3) hs.push({ y: (y0 + y1) / 2, a: Math.min(x0, x1), b: Math.max(x0, x1) });
+    else if (Math.abs(x1 - x0) < 1.2 && Math.abs(y1 - y0) > 3) vs.push({ x: (x0 + x1) / 2, a: Math.min(y0, y1), b: Math.max(y0, y1) });
+  };
+  let ctm = [1, 0, 0, 1, 0, 0];
+  const stack = [];
+  const STROKES = new Set([OPS.stroke, OPS.closeStroke, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
+  const FILLS = new Set([OPS.fill, OPS.eoFill]);
+  for (let i = 0; i < ops.fnArray.length; i++) {
+    const fn = ops.fnArray[i], args = ops.argsArray[i];
+    if (fn === OPS.save) stack.push(ctm);
+    else if (fn === OPS.restore) ctm = stack.pop() || ctm;
+    else if (fn === OPS.transform) ctm = mul(ctm, args);
+    else if (fn === OPS.paintFormXObjectBegin) { stack.push(ctm); if (args && args[0]) ctm = mul(ctm, args[0]); }
+    else if (fn === OPS.paintFormXObjectEnd) ctm = stack.pop() || ctm;
+    else if (fn === OPS.constructPath) {
+      // команда рисования может идти не сразу: перед ней цвет, толщина, прозрачность
+      let next = null;
+      for (let j = i + 1; j < Math.min(ops.fnArray.length, i + 10); j++) {
+        const f = ops.fnArray[j];
+        if (STROKES.has(f) || FILLS.has(f) || f === OPS.endPath || f === OPS.constructPath) { next = f; break; }
+      }
+      const stroked = STROKES.has(next), filled = FILLS.has(next) || STROKES.has(next);
+      if (!stroked && !filled) continue;
+      const [sub, coords] = args;
+      let k = 0, cur = null, start = null;
+      for (const op of sub) {
+        if (op === OPS.moveTo) { cur = start = pt(ctm, coords[k], coords[k + 1]); k += 2; }
+        else if (op === OPS.lineTo) { const p = pt(ctm, coords[k], coords[k + 1]); k += 2; if (cur && stroked) seg(cur, p); cur = p; }
+        else if (op === OPS.curveTo) { k += 6; cur = pt(ctm, coords[k - 2], coords[k - 1]); }
+        else if (op === OPS.curveTo2 || op === OPS.curveTo3) { k += 4; cur = pt(ctm, coords[k - 2], coords[k - 1]); }
+        else if (op === OPS.closePath) { if (cur && start && stroked) seg(cur, start); cur = start; }
+        else if (op === OPS.rectangle) {
+          const [x, y, w, h] = coords.slice(k, k + 4); k += 4;
+          const p0 = pt(ctm, x, y), p1 = pt(ctm, x + w, y + h);
+          const X0 = Math.min(p0[0], p1[0]), X1 = Math.max(p0[0], p1[0]), Y0 = Math.min(p0[1], p1[1]), Y1 = Math.max(p0[1], p1[1]);
+          if (X1 - X0 <= 3 && Y1 - Y0 > 3) vs.push({ x: (X0 + X1) / 2, a: Y0, b: Y1 });       // тонкий прямоугольник — линия
+          else if (Y1 - Y0 <= 3 && X1 - X0 > 3) hs.push({ y: (Y0 + Y1) / 2, a: X0, b: X1 });
+          else if (stroked && X1 - X0 > 3 && Y1 - Y0 > 3) { hs.push({ y: Y0, a: X0, b: X1 }, { y: Y1, a: X0, b: X1 }); vs.push({ x: X0, a: Y0, b: Y1 }, { x: X1, a: Y0, b: Y1 }); }
+        }
+      }
+    }
+  }
+  return { hs, vs };
+}
+
+/** Линии таблицы на картинке (скан): длинные тёмные отрезки по строкам и столбцам пикселей. k — пикселей → pt */
+function imageSegments(canvas, k) {
+  const w = canvas.width, h = canvas.height;
+  const d = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+  const dark = new Uint8Array(w * h);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) dark[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114 < 140 ? 1 : 0;
+  const hs = [], vs = [];
+  const minH = Math.max(40, w * 0.06), minV = Math.max(30, h * 0.02);
+  for (let y = 0; y < h; y++) {
+    let run = 0;
+    for (let x = 0; x <= w; x++) {
+      // небольшие разрывы (1–2 точки) в линии не считаются концом
+      const on = x < w && (dark[y * w + x] || (x + 2 < w && dark[y * w + x + 2] && run > 0));
+      if (on) run++;
+      else { if (run >= minH) hs.push({ y: y * k, a: (x - run) * k, b: x * k }); run = 0; }
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let run = 0;
+    for (let y = 0; y <= h; y++) {
+      const on = y < h && (dark[y * w + x] || (y + 2 < h && dark[(y + 2) * w + x] && run > 0));
+      if (on) run++;
+      else { if (run >= minV) vs.push({ x: x * k, a: (y - run) * k, b: y * k }); run = 0; }
+    }
+  }
+  return { hs, vs };
+}
+
+/** Сетка таблиц из линий + раскладка текста по ячейкам (общая часть для PDF и сканов) */
+function gridTables(hs, vs, items) {
+  const empty = { tables: [], rest: items };
+  if (hs.length < 2 || vs.length < 2) return empty;
+  // склеиваем отрезки, лежащие на одной линии
+  const merge = (list, key) => {
+    list.sort((p, q) => p[key] - q[key] || p.a - q.a);
+    const out = [];
+    for (const s of list) {
+      const o = out.find((t) => Math.abs(t[key] - s[key]) < 1.5 && s.a <= t.b + 2 && s.b >= t.a - 2);
+      if (o) { o.a = Math.min(o.a, s.a); o.b = Math.max(o.b, s.b); } else out.push({ ...s });
+    }
+    return out;
+  };
+  const H2 = merge(hs, 'y'), V2 = merge(vs, 'x');
+  // связанные группы линий — отдельные таблицы
+  const cross = (h, v) => v.x >= h.a - 2 && v.x <= h.b + 2 && h.y >= v.a - 2 && h.y <= v.b + 2;
+  const seenH = new Set(), seenV = new Set();
+  const groups = [];
+  for (const h0 of H2) {
+    if (seenH.has(h0)) continue;
+    const g = { h: [], v: [] }, queue = [['h', h0]];
+    seenH.add(h0);
+    while (queue.length) {
+      const [t, s] = queue.pop();
+      g[t].push(s);
+      if (t === 'h') for (const v of V2) { if (!seenV.has(v) && cross(s, v)) { seenV.add(v); queue.push(['v', v]); } }
+      else for (const h of H2) { if (!seenH.has(h) && cross(h, s)) { seenH.add(h); queue.push(['h', h]); } }
+    }
+    if (g.h.length >= 2 && g.v.length >= 2) groups.push(g);
+  }
+  const cluster = (vals) => { const s = [...vals].sort((a, b) => a - b), out = []; for (const v of s) if (!out.length || v - out[out.length - 1] > 2.5) out.push(v); return out; };
+  const tables = [];
+  let rest = items;
+  for (const g of groups) {
+    const xs = cluster(g.v.map((v) => v.x)), ys = cluster(g.h.map((h) => h.y));
+    const R = ys.length - 1, C = xs.length - 1;
+    if (R < 1 || C < 1 || R * C < 2 || R > 200 || C > 60) continue; // одна рамка — не таблица
+    const covers = (list, key, pos, a, b) => list.some((s) => Math.abs(s[key] - pos) < 2.5 && Math.min(s.b, b) - Math.max(s.a, a) >= (b - a) * 0.6);
+    // объединение соседних клеток сетки, если между ними нет линии
+    const id = Array.from({ length: R }, (_, r) => Array.from({ length: C }, (_, c) => r * C + c));
+    const parent = id.flat();
+    const find = (a) => (parent[a] === a ? a : (parent[a] = find(parent[a])));
+    const unite = (a, b) => { parent[find(a)] = find(b); };
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      if (c < C - 1 && !covers(g.v, 'x', xs[c + 1], ys[r], ys[r + 1])) unite(id[r][c], id[r][c + 1]);
+      if (r < R - 1 && !covers(g.h, 'y', ys[r + 1], xs[c], xs[c + 1])) unite(id[r][c], id[r + 1][c]);
+    }
+    const box = {};
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      const k = find(id[r][c]);
+      const b = box[k] || (box[k] = { r0: r, c0: c, r1: r, c1: c, items: [] });
+      b.r0 = Math.min(b.r0, r); b.c0 = Math.min(b.c0, c); b.r1 = Math.max(b.r1, r); b.c1 = Math.max(b.c1, c);
+    }
+    const x0 = xs[0], x1 = xs[C], y0 = ys[0], y1 = ys[R];
+    const unitOf = (x, y) => {
+      let c = 0, r = 0;
+      while (c < C - 1 && x > xs[c + 1]) c++;
+      while (r < R - 1 && y > ys[r + 1]) r++;
+      return box[find(id[r][c])];
+    };
+    const left = [];
+    for (const it of rest) {
+      const cx = it.x + (it.w || 0) / 2, cy = it.y - it.size * 0.35;
+      if (cx > x0 && cx < x1 && cy > y0 && cy < y1) unitOf(cx, cy).items.push(it); else left.push(it);
+    }
+    // одна строка и ни одного текста внутри — скорее рамка рисунка, а не таблица
+    const boxes = Object.values(box);
+    if (!boxes.some((b) => b.items.length)) continue;
+    rest = left;
+    const rows = Array.from({ length: R }, () => Array(C).fill(null));
+    for (const b of boxes) {
+      // текст ячейки: строки по высоте, внутри строки — по горизонтали
+      const its = b.items.sort((p, q) => p.y - q.y || p.x - q.x);
+      const lns = [];
+      for (const it of its) {
+        const ln = lns.find((l) => Math.abs(l.y - it.y) < it.size * 0.5);
+        if (ln) ln.items.push(it); else lns.push({ y: it.y, items: [it] });
+      }
+      const lineText = (l) => {
+        let s = '', end = null;
+        for (const it of l.items.sort((p, q) => p.x - q.x)) { if (end != null && it.x - end > it.size * 0.2 && !/\s$/.test(s)) s += ' '; s += it.str; end = it.x + it.w; }
+        return s.replace(/\s+/g, ' ').trim();
+      };
+      const texts = lns.map(lineText).filter(Boolean);
+      // переносы слов внутри ячейки склеиваем, остальные строки — через пробел (это одна ячейка, а не абзацы)
+      let text = '';
+      for (const t of texts) text = !text ? t : /[a-zа-яё]-$/i.test(text) && /^[a-zа-яё]/.test(t) ? text.slice(0, -1) + t : text + ' ' + t;
+      const bold = b.items.length && b.items.every((it) => it.bold);
+      const cs = b.c1 - b.c0 + 1, rs = b.r1 - b.r0 + 1;
+      rows[b.r0][b.c0] = { text, html: bold ? `<b>${escapeHtml(text)}</b>` : escapeHtml(text), colspan: cs, rowspan: rs };
+      for (let r = b.r0; r <= b.r1; r++) for (let c = b.c0; c <= b.c1; c++) if (r !== b.r0 || c !== b.c0) rows[r][c] = undefined; // занято объединением
+    }
+    tables.push({ x0, y0, x1, y1, rows });
+  }
+  return { tables, rest };
+}
+
+function pdfTableHtml(t) {
+  return '<table>' + t.rows.map((r) => '<tr>' + r.map((c) => (c === undefined ? '' : c === null ? '<td></td>'
+    : `<td${c.colspan > 1 ? ` colspan="${c.colspan}"` : ''}${c.rowspan > 1 ? ` rowspan="${c.rowspan}"` : ''}>${c.html}</td>`)).join('') + '</tr>').join('') + '</table>';
+}
+
 async function pdfPageToHtml(page, content) {
   const vp = page.getViewport({ scale: 1 });
   const H = vp.height;
@@ -982,10 +1178,15 @@ async function pdfPageToHtml(page, content) {
     const size = Math.hypot(c, d) || Math.hypot(a, b) || 10;
     return { str: it.str, x: e, y: H - f, w: it.width, size, bold: isBold(it.fontName), vertical: Math.abs(b) > Math.abs(a) };
   }).filter((e) => !e.vertical);
+  // таблицы с рамками забирают свой текст; остальное — обычные абзацы
+  let tables = [];
+  const allEls = els.slice();
+  try { const t = pdfRuledTables(ops, H, allEls); tables = t.tables; els.length = 0; els.push(...t.rest); } catch (e) { console.warn('Таблицы PDF:', e); }
   els.sort((p, q) => p.y - q.y || p.x - q.x);
   const lines = [];
   for (const e of els) {
-    const ln = lines.find((l) => Math.abs(l.y - e.y) < Math.min(l.size, e.size) * 0.45 && e.x > l.x0 - 2 * e.size);
+    // мелкий текст чуть выше/ниже строки (индексы м², H₂O) — часть той же строки
+    const ln = lines.find((l) => Math.abs(l.y - e.y) < Math.max(l.size, e.size) * 0.5 && e.x > l.x0 - 2 * e.size);
     if (ln) ln.items.push(e), (ln.size = Math.max(ln.size, e.size));
     else lines.push({ y: e.y, size: e.size, items: [e], x0: e.x });
   }
@@ -994,14 +1195,19 @@ async function pdfPageToHtml(page, content) {
     l.x0 = l.items[0].x;
     const last = l.items[l.items.length - 1];
     l.x1 = last.x + last.w;
+    // базовая линия строки — у самого крупного текста
+    const main = l.items.reduce((a, b) => (b.size > a.size ? b : a));
+    l.y = main.y;
     // текст строки с пробелами по зазорам между кусками
     l.runs = [];
     let prevEnd = null;
     for (const it of l.items) {
+      const small = it.size < l.size * 0.85;
+      const va = small && l.y - it.y > l.size * 0.15 ? 'sup' : small && it.y - l.y > l.size * 0.08 ? 'sub' : null;
       let s = it.str;
       if (prevEnd != null && it.x - prevEnd > it.size * 0.2 && !/\s$/.test(l.runs.map((r) => r.t).join('')) && !/^\s/.test(s)) s = ' ' + s;
       const r = l.runs[l.runs.length - 1];
-      if (r && r.b === it.bold) r.t += s; else l.runs.push({ t: s, b: it.bold });
+      if (r && r.b === it.bold && r.va === va) r.t += s; else l.runs.push({ t: s, b: it.bold, va });
       prevEnd = it.x + it.w;
     }
     // «математические» буквы (𝜆, 𝑥) есть не во всех шрифтах Word — заменяем обычными
@@ -1054,7 +1260,11 @@ async function pdfPageToHtml(page, content) {
     let html = '';
     for (let i = 0; i < p.lines.length; i++) {
       const l = p.lines[i];
-      let part = l.runs.map((r) => (r.b && !p.lines.every((x) => x.bold) ? `<b>${escapeHtml(r.t)}</b>` : escapeHtml(r.t))).join('').replace(/\s+/g, ' ').trim();
+      let part = l.runs.map((r) => {
+        let t = escapeHtml(r.t);
+        if (r.va) t = `<${r.va}>${t.trim()}</${r.va}>`;
+        return r.b && !p.lines.every((x) => x.bold) ? `<b>${t}</b>` : t;
+      }).join('').replace(/\s+/g, ' ').trim();
       if (i > 0) {
         // перенос слова: «конвер-» + «тация» → «конвертация»
         if (/[a-zа-яё]-$/i.test(html.replace(/<[^>]+>/g, '')) && /^[a-zа-яё]/.test(l.text)) html = html.replace(/-(<\/b>)?$/, '$1');
@@ -1078,6 +1288,8 @@ async function pdfPageToHtml(page, content) {
     else blocks.push({ y: p.lines[0].y - p.size, html: `<${tag}${style}>${body}</${tag}>` });
   }
 
+  for (const t of tables) blocks.push({ y: t.y0, html: pdfTableHtml(t) });
+
   // картинки: положение по матрице преобразования, вырезаем с отрисованной страницы
   const imgs = [];
   if (ops) {
@@ -1100,6 +1312,7 @@ async function pdfPageToHtml(page, content) {
         if (bw < 24 || bh < 24) continue; // значки и линии
         if (bw * bh > vp.width * H * 0.8 && textLines.length > 3) continue; // фон-скан под распознанным текстом
         if (imgs.some((m) => Math.abs(m.x - bx) < 2 && Math.abs(m.y - by) < 2)) continue;
+        if (tables.some((t) => bx >= t.x0 - 2 && bx + bw <= t.x1 + 2 && by >= t.y0 - 2 && by + bh <= t.y1 + 2)) continue; // внутри таблицы
         imgs.push({ x: bx, y: by, w: bw, h: bh });
       }
     }
@@ -1113,7 +1326,7 @@ async function pdfPageToHtml(page, content) {
       o.width = Math.max(1, Math.round(m.w * k)); o.height = Math.max(1, Math.round(m.h * k));
       o.getContext('2d').drawImage(c, m.x * k, m.y * k, m.w * k, m.h * k, 0, 0, o.width, o.height);
       const url = o.width * o.height > 400000 ? o.toDataURL('image/jpeg', 0.9) : o.toDataURL('image/png');
-      blocks.push({ y: m.y, html: `<p style="text-align:center"><img src="${url}" width="${Math.round(m.w)}" height="${Math.round(m.h)}"></p>` });
+      blocks.push({ y: m.y, html: `<p style="text-align:center"><img src="${url}" width="${Math.round(m.w * 4 / 3)}" height="${Math.round(m.h * 4 / 3)}"></p>` });
     }
     c.width = c.height = 0;
   }
@@ -1228,20 +1441,61 @@ async function pdfToXlsx(file, onProgress, onStatus) {
     if (/^-?\d{1,3}([  ]\d{3})*([.,]\d+)?$|^-?\d+([.,]\d+)?$/.test(t)) return Number(t.replace(/[  ]/g, '').replace(',', '.'));
     return t;
   };
-  let anyText = false;
+  let anyText = false, ocrPages = 0;
   for (let p = 1; p <= pdf.numPages; p++) {
     onStatus(`Таблицы: страница ${p} из ${pdf.numPages}…`);
     const page = await pdf.getPage(p);
     const vp = page.getViewport({ scale: 1 });
-    const items = (await page.getTextContent()).items
+    let items = (await page.getTextContent()).items
       .filter((it) => it.str && it.str.trim())
       .map((it) => {
         const tx = pdfjs.Util.transform(vp.transform, it.transform);
         const h = Math.hypot(tx[2], tx[3]) || 10;
         return { s: it.str, x: tx[4], y: tx[5], w: (it.width || it.str.length * h * 0.5) * vp.scale, h };
       });
+    // линии таблиц: у PDF — из рисования страницы, у скана — с картинки
+    let segs = null;
+    if (!items.length) {
+      // скан: распознаём слова с их положением
+      onStatus(`Распознавание таблицы: страница ${p} из ${pdf.numPages}…`);
+      const c = await renderPdfPage(page, 2000);
+      const k = vp.width / c.width;
+      segs = imageSegments(c, k);
+      // линии таблицы стираем: иначе распознавание принимает их за «|», «[» и путает цифры рядом
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff';
+      for (const sgm of segs.hs) g.fillRect(sgm.a / k - 1, sgm.y / k - 2, (sgm.b - sgm.a) / k + 2, 4);
+      for (const sgm of segs.vs) g.fillRect(sgm.x / k - 2, sgm.a / k - 1, 4, (sgm.b - sgm.a) / k + 2);
+      const worker = await getOcrWorker();
+      const { data } = await worker.recognize(c, {}, { text: true, blocks: true });
+      const words = data.words || (data.blocks || []).flatMap((b) => b.paragraphs.flatMap((pp) => pp.lines.flatMap((l) => l.words)));
+      items = words.filter((w) => w.text && w.text.trim() && w.confidence > 25 && !/^[|{}[\]_\-—–=~.:;,'"`]+$/.test(w.text.trim()))
+        .map((w) => ({ s: w.text.trim().replace(/^[|[\]{}]+|[|[\]{}]+$/g, ''), x: w.bbox.x0 * k, y: w.bbox.y1 * k, w: (w.bbox.x1 - w.bbox.x0) * k, h: Math.max(4, (w.bbox.y1 - w.bbox.y0) * k) }))
+        .filter((it) => it.s);
+      c.width = c.height = 0;
+      if (items.length) ocrPages++;
+    } else {
+      try { segs = pdfSegments(await page.getOperatorList(), vp.height); } catch { segs = null; }
+    }
     if (!items.length) continue;
     anyText = true;
+    // таблицы с рамками → отдельные листы с объединёнными ячейками
+    if (segs) {
+      const grid = gridTables(segs.hs, segs.vs, items.map((it) => ({ str: it.s, x: it.x, y: it.y, w: it.w, size: it.h, bold: false })));
+      if (grid.tables.length) {
+        grid.tables.forEach((t, ti) => {
+          const aoa = t.rows.map((r) => r.map((c) => (c ? toCell(c.text) : '')));
+          const ws = XLSX.utils.aoa_to_sheet(aoa);
+          ws['!merges'] = [];
+          t.rows.forEach((r, ri) => r.forEach((c, ci) => { if (c && (c.colspan > 1 || c.rowspan > 1)) ws['!merges'].push({ s: { r: ri, c: ci }, e: { r: ri + c.rowspan - 1, c: ci + c.colspan - 1 } }); }));
+          // ширины столбцов по самой длинной строке
+          ws['!cols'] = (aoa[0] || []).map((_, ci) => ({ wch: Math.min(60, Math.max(6, ...aoa.map((r) => String(r[ci] ?? '').length))) }));
+          XLSX.utils.book_append_sheet(wb, ws, grid.tables.length > 1 ? `Стр. ${p} — табл. ${ti + 1}` : `Стр. ${p}`);
+        });
+        onProgress(p / pdf.numPages);
+        continue;
+      }
+    }
     // строки: элементы с близкой базовой линией
     items.sort((a, b) => a.y - b.y || a.x - b.x);
     const lines = [];
@@ -1273,8 +1527,15 @@ async function pdfToXlsx(file, onProgress, onStatus) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), `Стр. ${p}`);
     onProgress(p / pdf.numPages);
   }
-  if (!anyText) throw new Error('В PDF нет текстового слоя (это скан) — сначала распознайте его: PDF → DOCX/TXT.');
-  return { blob: new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: MIME.xlsx }), ext: 'xlsx', note: `${wb.SheetNames.length} лист(ов)` };
+  if (!anyText) throw new Error('Текст не найден — даже распознавание ничего не нашло.');
+  return { blob: new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: MIME.xlsx }), ext: 'xlsx', note: `${wb.SheetNames.length} лист(ов)${ocrPages ? `, распознано стр.: ${ocrPages}` : ''}` };
+}
+
+/** Фото или скан таблицы → Excel: картинка становится страницей PDF без текста, дальше — распознавание с сеткой */
+async function imageToXlsx(file, ext, opts, onProgress, onStatus) {
+  const pdf = await convertImage(file, ext, 'pdf', { ...opts, maxWidth: null }, () => {}, onStatus);
+  const blob = pdf instanceof Blob ? pdf : pdf.blob;
+  return pdfToXlsx(new File([blob], 'scan.pdf'), onProgress, onStatus);
 }
 
 /** Текст всех страниц; страницы без текстового слоя (сканы) распознаются OCR. */
@@ -1424,7 +1685,8 @@ function fb2ToHtml(text) {
       case 'v': return `<p>${inline(n)}</p>`;
       case 'table': return `<table>${[...n.children].map((tr) => `<tr>${[...tr.children].map((td) => {
         const t = td.localName === 'th' ? 'th' : 'td';
-        return `<${t}>${inline(td)}</${t}>`;
+        const cs = td.getAttribute('colspan'), rs = td.getAttribute('rowspan'), al = td.getAttribute('align');
+        return `<${t}${cs ? ` colspan="${cs}"` : ''}${rs ? ` rowspan="${rs}"` : ''}${al ? ` style="text-align:${al}"` : ''}>${inline(td)}</${t}>`;
       }).join('')}</tr>`).join('')}</table>`;
       default: return block(n, depth);
     }
@@ -1540,37 +1802,74 @@ async function mobiToHtml(file) {
 /* ===================== RTF, ODT, PPTX → HTML ===================== */
 
 /** RTF: текст, абзацы, жирный/курсив/подчёркнутый, таблицы (ячейки через табуляцию), кириллица (\'xx и \uN). */
-function rtfToHtml(rtf) {
-  const SKIP = new Set(['fonttbl', 'colortbl', 'stylesheet', 'info', 'pict', 'header', 'footer', 'headerl', 'headerr', 'footerl', 'footerr',
-    'object', 'themedata', 'colorschememapping', 'latentstyles', 'datastore', 'xmlnstbl', 'listtable', 'listoverridetable',
-    'rsidtbl', 'generator', 'filetbl', 'revtbl', 'listtext', 'pgdsctbl', 'mmathPr', 'fldinst', 'bkmkstart', 'bkmkend', 'shpinst', 'nonshppict']);
+async function rtfToHtml(rtf) {
+  // группы, которые не являются текстом документа
+  const SKIP = new Set(['fonttbl', 'colortbl', 'stylesheet', 'info', 'header', 'footer', 'headerl', 'headerr', 'headerf', 'footerl', 'footerr', 'footerf',
+    'themedata', 'colorschememapping', 'latentstyles', 'datastore', 'xmlnstbl', 'listtable', 'listoverridetable',
+    'rsidtbl', 'generator', 'filetbl', 'revtbl', 'listtext', 'pgdsctbl', 'mmathPr', 'fldinst', 'bkmkstart', 'bkmkend', 'shpinst', 'nonshppict', 'objdata', 'footnote', 'annotation', 'pntext']);
   let codepage = 1252;
   const m = rtf.match(/\\ansicpg(\d+)/);
   if (m) codepage = +m[1];
   let dec;
   try { dec = new TextDecoder('windows-' + codepage); } catch { dec = new TextDecoder('windows-1252'); }
 
-  const paras = [];
+  const items = [];      // абзацы { runs, align } и таблицы { rows }
   let runs = [];
-  let st = { b: false, i: false, u: false, skip: false, uc: 1 };
+  let st = { b: false, i: false, u: false, s: false, va: null, skip: false, uc: 1, align: '', intbl: false, pict: null };
   const stack = [];
   let bytes = [];
   let skipChars = 0;
+  // таблица: описание ячеек строки (\cellx и флаги объединения), собранные ячейки, строки
+  let rowDefs = [], curDef = {}, rowCells = [], curCell = [], tableRows = null;
   const flushBytes = () => { if (bytes.length) { addText(dec.decode(new Uint8Array(bytes))); bytes = []; } };
   function addText(t) {
     if (st.skip || !t) return;
+    if (st.pict) return;
     const last = runs[runs.length - 1];
-    if (last && last.b === st.b && last.i === st.i && last.u === st.u) last.t += t;
-    else runs.push({ t, b: st.b, i: st.i, u: st.u });
+    if (last && !last.img && last.b === st.b && last.i === st.i && last.u === st.u && last.s === st.s && last.va === st.va) last.t += t;
+    else runs.push({ t, b: st.b, i: st.i, u: st.u, s: st.s, va: st.va });
   }
-  const endPara = () => { flushBytes(); paras.push(runs); runs = []; };
+  const closeTable = () => { if (tableRows) { if (rowCells.length) tableRows.push({ cells: rowCells, defs: rowDefs }); items.push({ rows: tableRows }); tableRows = null; rowCells = []; } };
+  const endPara = () => {
+    flushBytes();
+    if (st.intbl) { curCell.push({ runs, align: st.align }); runs = []; return; }
+    closeTable();
+    items.push({ runs, align: st.align });
+    runs = [];
+  };
+  const endCell = () => {
+    flushBytes();
+    if (runs.length || !curCell.length) curCell.push({ runs, align: st.align });
+    runs = [];
+    rowCells.push(curCell);
+    curCell = [];
+    if (!tableRows) tableRows = [];
+  };
+  const endRow = () => { flushBytes(); if (!tableRows) tableRows = []; tableRows.push({ cells: rowCells, defs: rowDefs }); rowCells = []; };
+  const finishPict = (p) => {
+    const hex = p.hex.join('').replace(/[^0-9a-fA-F]/g, '');
+    if (!hex || !p.type) return;
+    const u8 = new Uint8Array(hex.length >> 1);
+    for (let k = 0; k < u8.length; k++) u8[k] = parseInt(hex.substr(k * 2, 2), 16);
+    // размер на странице: \picwgoal/\pichgoal в твипах (1/20 pt) с учётом масштаба
+    const w = p.wgoal ? p.wgoal / 20 * (p.scalex || 100) / 100 : null, h = p.hgoal ? p.hgoal / 20 * (p.scaley || 100) / 100 : null;
+    runs.push({ img: true, type: p.type, data: u8, w, h });
+  };
 
   for (let i = 0; i < rtf.length; i++) {
     const c = rtf[i];
     if (c === '{') { flushBytes(); stack.push({ ...st }); continue; }
-    if (c === '}') { flushBytes(); st = stack.pop() || st; continue; }
+    if (c === '}') {
+      flushBytes();
+      if (st.pict && stack.length === st.pict.depth) { const p = st.pict; st.pict = null; finishPict(p); }
+      const prev = stack.pop() || st;
+      // свойства абзаца и таблицы живут дольше группы, где их задали
+      st = { ...prev, align: st.align, intbl: st.intbl };
+      continue;
+    }
     if (c === '\r' || c === '\n') continue;
     if (c !== '\\') {
+      if (st.pict) { st.pict.hex.push(c); continue; }
       if (skipChars > 0) { flushBytes(); skipChars--; continue; }
       // «сырые» 8-битные символы в RTF записаны в кодировке документа (например, Windows-1251)
       if (c.charCodeAt(0) >= 0x80) { if (!st.skip) bytes.push(c.charCodeAt(0)); continue; }
@@ -1596,16 +1895,50 @@ function rtfToHtml(rtf) {
     i += w[0].length;
     const word = w[1], arg = w[2] !== undefined ? +w[2] : null;
     if (SKIP.has(word)) { st.skip = true; continue; }
+    if (st.pict) {
+      const p = st.pict;
+      switch (word) {
+        case 'pngblip': p.type = 'png'; break;
+        case 'jpegblip': p.type = 'jpeg'; break;
+        case 'wmetafile': p.type = 'wmf'; break;
+        case 'emfblip': p.type = 'emf'; break;
+        case 'picwgoal': p.wgoal = arg; break;
+        case 'pichgoal': p.hgoal = arg; break;
+        case 'picscalex': p.scalex = arg; break;
+        case 'picscaley': p.scaley = arg; break;
+        case 'bin': i += arg || 0; break;
+      }
+      continue;
+    }
     switch (word) {
-      case 'par': case 'sect': case 'page': endPara(); break;
+      case 'pict': if (!st.skip) st.pict = { hex: [], depth: stack.length }; break;
+      case 'par': case 'sect': endPara(); break;
+      case 'page': endPara(); closeTable(); items.push({ pageBreak: true }); break;
       case 'line': flushBytes(); addText('\n'); break;
-      case 'tab': case 'cell': flushBytes(); addText('\t'); break;
-      case 'row': endPara(); break;
+      case 'tab': flushBytes(); addText('\t'); break;
+      case 'pard': flushBytes(); st.align = ''; st.intbl = false; break;
+      case 'intbl': st.intbl = true; break;
+      case 'qc': st.align = 'center'; break;
+      case 'qr': st.align = 'right'; break;
+      case 'qj': st.align = 'justify'; break;
+      case 'ql': st.align = ''; break;
+      case 'trowd': rowDefs = []; curDef = {}; break;
+      case 'clmgf': curDef.hm = 'first'; break;
+      case 'clmrg': curDef.hm = 'cont'; break;
+      case 'clvmgf': curDef.vm = 'first'; break;
+      case 'clvmrg': curDef.vm = 'cont'; break;
+      case 'cellx': rowDefs.push(curDef); curDef = {}; break;
+      case 'cell': case 'nestcell': endCell(); break;
+      case 'row': case 'nestrow': endRow(); break;
       case 'b': flushBytes(); st.b = arg !== 0; break;
       case 'i': flushBytes(); st.i = arg !== 0; break;
       case 'ul': flushBytes(); st.u = arg !== 0; break;
       case 'ulnone': flushBytes(); st.u = false; break;
-      case 'plain': flushBytes(); st.b = st.i = st.u = false; break;
+      case 'strike': flushBytes(); st.s = arg !== 0; break;
+      case 'super': flushBytes(); st.va = 'sup'; break;
+      case 'sub': flushBytes(); st.va = 'sub'; break;
+      case 'nosupersub': flushBytes(); st.va = null; break;
+      case 'plain': flushBytes(); st.b = st.i = st.u = st.s = false; st.va = null; break;
       case 'uc': st.uc = arg ?? 1; break;
       case 'u': {
         flushBytes();
@@ -1623,19 +1956,52 @@ function rtfToHtml(rtf) {
     }
   }
   endPara();
-  const html = paras.map((p) => {
-    const inner = p.map((r) => {
-      let t = escapeHtml(r.t).replace(/\n/g, '<br>').replace(/\t/g, '&emsp;');
-      if (r.b) t = `<b>${t}</b>`;
-      if (r.i) t = `<i>${t}</i>`;
-      if (r.u) t = `<u>${t}</u>`;
-      return t;
-    }).join('');
-    return inner.replace(/&emsp;|\s|&nbsp;/g, '') ? `<p>${inner}</p>` : '';
-  }).filter(Boolean).join('\n');
-  if (!html) throw new Error('В RTF не найден текст.');
+  closeTable();
+
+  // картинки → data URL (WMF/EMF — рисуем сами)
+  const allRuns = [];
+  const collect = (rs) => rs.forEach((r) => r.img && allRuns.push(r));
+  for (const it of items) {
+    if (it.runs) collect(it.runs);
+    if (it.rows) it.rows.forEach((row) => row.cells.forEach((cell) => cell.forEach((p) => collect(p.runs))));
+  }
+  for (const r of allRuns) {
+    if (r.type === 'png' || r.type === 'jpeg') r.url = `data:image/${r.type};base64,${u8ToB64(r.data)}`;
+    else if (typeof metafileToPng === 'function') {
+      try { r.url = await metafileToPng(r.data.buffer.slice(r.data.byteOffset, r.data.byteOffset + r.data.byteLength), r.type); } catch { r.url = null; }
+    }
+  }
+
+  const runsHtml = (rs) => rs.map((r) => {
+    if (r.img) return r.url ? `<img src="${r.url}"${r.w ? ` width="${Math.round(r.w * 4 / 3)}"` : ''}${r.h ? ` height="${Math.round(r.h * 4 / 3)}"` : ''}>` : '';
+    let t = escapeHtml(r.t).replace(/\n/g, '<br>').replace(/\t/g, '&emsp;');
+    if (r.va) t = `<${r.va}>${t}</${r.va}>`;
+    if (r.s) t = `<s>${t}</s>`;
+    if (r.b) t = `<b>${t}</b>`;
+    if (r.i) t = `<i>${t}</i>`;
+    if (r.u) t = `<u>${t}</u>`;
+    return t;
+  }).join('');
+  const paraHtml = (p) => {
+    const inner = runsHtml(p.runs);
+    if (!inner.replace(/&emsp;|\s|&nbsp;| /g, '')) return '';
+    return p.align ? `<p style="text-align:${p.align}">${inner}</p>` : `<p>${inner}</p>`;
+  };
+  const tableHtml = (rows) => {
+    // объединения: \clmrg — продолжение слева (colspan), \clvmrg — продолжение сверху (rowspan)
+    const grid = rows.map((row) => row.cells.map((cell, ci) => ({ html: cell.map((p) => runsHtml(p.runs)).filter((x) => x.trim()).join('<br>'), def: row.defs[ci] || {}, cs: 1, rs: 1, skip: false })));
+    grid.forEach((row, ri) => row.forEach((c, ci) => {
+      if (c.def.hm === 'cont') { for (let k = ci - 1; k >= 0; k--) if (!row[k].skip) { row[k].cs++; break; } c.skip = true; }
+      if (c.def.vm === 'cont') { for (let r = ri - 1; r >= 0; r--) { const up = grid[r][ci]; if (up && !up.skip) { up.rs++; break; } } c.skip = true; }
+    }));
+    return '<table>' + grid.map((row) => '<tr>' + row.filter((c) => !c.skip).map((c) => `<td${c.cs > 1 ? ` colspan="${c.cs}"` : ''}${c.rs > 1 ? ` rowspan="${c.rs}"` : ''}>${c.html}</td>`).join('') + '</tr>').join('') + '</table>';
+  };
+  const html = items.map((it) => (it.pageBreak ? '<hr>' : it.rows ? tableHtml(it.rows) : paraHtml(it))).filter(Boolean).join('\n');
+  if (!html.replace(/<hr>/g, '').trim()) throw new Error('В RTF не найден текст.');
   return html;
 }
+
+const u8ToB64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
 
 /** ODT (LibreOffice/OpenOffice Writer): заголовки, абзацы, списки, таблицы, жирный/курсив, картинки */
 async function odtToHtml(file) {
@@ -1649,11 +2015,14 @@ async function odtToHtml(file) {
   const styles = {};
   for (const s of doc.getElementsByTagNameNS('*', 'style')) {
     const tp = [...s.children].find((c) => c.localName === 'text-properties');
-    if (!tp) continue;
+    const pp = [...s.children].find((c) => c.localName === 'paragraph-properties');
+    if (!tp && !pp) continue;
+    const al = pp ? attr(pp, 'text-align') : '';
     styles[attr(s, 'name')] = {
-      b: attr(tp, 'font-weight') === 'bold',
-      i: attr(tp, 'font-style') === 'italic',
-      u: !!attr(tp, 'text-underline-style') && attr(tp, 'text-underline-style') !== 'none',
+      b: !!tp && attr(tp, 'font-weight') === 'bold',
+      i: !!tp && attr(tp, 'font-style') === 'italic',
+      u: !!tp && !!attr(tp, 'text-underline-style') && attr(tp, 'text-underline-style') !== 'none',
+      align: { center: 'center', end: 'right', right: 'right', justify: 'justify' }[al] || '',
     };
   }
   const images = {};
@@ -1674,6 +2043,18 @@ async function odtToHtml(file) {
           break;
         }
         case 'frame': {
+          // формула (объект с MathML внутри) — переносим как формулу
+          const obj = [...n.children].find((c) => c.localName === 'object');
+          const objHref = obj && attr(obj, 'href').replace(/^\.\//, '').replace(/\/$/, '');
+          if (objHref && zip.file(`${objHref}/content.xml`)) {
+            const mdoc = new DOMParser().parseFromString(await zip.file(`${objHref}/content.xml`).async('string'), 'application/xml');
+            const math = mdoc.getElementsByTagNameNS('http://www.w3.org/1998/Math/MathML', 'math')[0];
+            if (math) {
+              math.querySelectorAll('annotation, annotation-xml').forEach((a) => a.remove());
+              out += new XMLSerializer().serializeToString(math);
+              break;
+            }
+          }
           const im = [...n.children].find((c) => c.localName === 'image');
           const href = im && attr(im, 'href');
           if (href) {
@@ -1697,14 +2078,19 @@ async function odtToHtml(file) {
           let t = await inline(n);
           const s = styles[attr(n, 'style-name')];
           if (s) { if (s.b) t = `<b>${t}</b>`; if (s.i) t = `<i>${t}</i>`; }
-          out += `<p>${t}</p>\n`;
+          out += s && s.align ? `<p style="text-align:${s.align}">${t}</p>\n` : `<p>${t}</p>\n`;
           break;
         }
         case 'list': out += `<ul>${(await Promise.all([...n.children].filter((c) => c.localName === 'list-item').map(async (li) => `<li>${(await block(li)).replace(/<\/?p>/g, '')}</li>`))).join('')}</ul>\n`; break;
         case 'table': {
           const rows = [...n.getElementsByTagNameNS('*', 'table-row')];
+          // объединённые ячейки: covered-table-cell пропускаем, у ячейки — colspan/rowspan
           out += '<table>' + (await Promise.all(rows.map(async (r) =>
-            '<tr>' + (await Promise.all([...r.children].filter((c) => c.localName === 'table-cell').map(async (c) => `<td>${(await block(c)).replace(/<\/?p>/g, ' ').trim()}</td>`))).join('') + '</tr>'))).join('') + '</table>\n';
+            '<tr>' + (await Promise.all([...r.children].filter((c) => c.localName === 'table-cell').map(async (c) => {
+              const cs = +attr(c, 'number-columns-spanned') || 1, rs = +attr(c, 'number-rows-spanned') || 1;
+              const inner = (await block(c)).trim().replace(/^<p>|<\/p>$/g, '').replace(/<\/p>\s*<p[^>]*>/g, '<br>');
+              return `<td${cs > 1 ? ` colspan="${cs}"` : ''}${rs > 1 ? ` rowspan="${rs}"` : ''}>${inner}</td>`;
+            }))).join('') + '</tr>'))).join('') + '</table>\n';
           break;
         }
         case 'section': case 'text': out += await block(n); break;
@@ -1820,7 +2206,20 @@ async function docToHtml(file, ext, onProgress, onStatus) {
     }
     case 'docx': {
       await loadLib('mammoth');
-      return (await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() })).value;
+      // формулы mammoth выбрасывает — заменяем их метками и возвращаем как MathML
+      const prep = typeof docxMathPrepare === 'function' ? await docxMathPrepare(await file.arrayBuffer()) : { buffer: await file.arrayBuffer(), formulas: [] };
+      const html = (await mammoth.convertToHtml({ arrayBuffer: prep.buffer }, {
+        // рисунки WMF/EMF (схемы, старые формулы) браузер не показывает — рисуем их сами
+        convertImage: mammoth.images.imgElement(async (image) => {
+          const type = image.contentType || '';
+          if (/wmf|emf|x-wmf|x-emf/i.test(type) && typeof metafileToPng === 'function') {
+            const png = await metafileToPng(await image.read().then((b) => (b.buffer ? b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) : b)), /emf/i.test(type) ? 'emf' : 'wmf');
+            if (png) return { src: png };
+          }
+          return { src: `data:${type};base64,${await image.read('base64')}` };
+        }),
+      })).value;
+      return docxMathRestore(html, prep.formulas);
     }
     case 'pdf': case 'djvu': return pagesToHtml(file, canon(ext), onProgress, onStatus);
     case 'epub': return epubToHtml(file);
@@ -1940,6 +2339,10 @@ function runsOf(node, fmt = { b: false, i: false, u: false }) {
       if (tag === 'b' || tag === 'strong') f.b = true;
       if (tag === 'i' || tag === 'em') f.i = true;
       if (tag === 'u') f.u = true;
+      if (tag === 's' || tag === 'del' || tag === 'strike') f.s = true;
+      if (tag === 'sup') f.va = 'superscript';
+      if (tag === 'sub') f.va = 'subscript';
+      if (tag === 'code' || tag === 'kbd') f.mono = true;
       runs.push(...runsOf(n, f));
       if (tag === 'li' || tag === 'p') runs.push({ br: true });
     }
@@ -1957,7 +2360,8 @@ function collectBlocks(root) {
       }
       if (n.nodeType !== 1) continue;
       const tag = n.tagName.toLowerCase();
-      if (/^h[1-6]$/.test(tag)) blocks.push({ style: 'Heading' + Math.min(+tag[1], 3), runs: runsOf(n) });
+      const align = (n.style && n.style.textAlign) || n.getAttribute('align') || '';
+      if (/^h[1-6]$/.test(tag)) blocks.push({ style: 'Heading' + Math.min(+tag[1], 3), runs: runsOf(n), align });
       else if (tag === 'li') {
         const inline = document.createElement('div');
         for (const c of n.childNodes) if (!(c.nodeType === 1 && ['ul', 'ol'].includes(c.tagName.toLowerCase()))) inline.appendChild(c.cloneNode(true));
@@ -1969,14 +2373,14 @@ function collectBlocks(root) {
         const lines = n.textContent.replace(/\n$/, '').split('\n');
         blocks.push({ mono: true, runs: lines.flatMap((l, i) => (i ? [{ br: true }, { text: l }] : [{ text: l }])) });
       } else if (tag === 'table') {
-        const rows = [...n.rows].map((tr) => [...tr.cells].map((td) => ({ runs: runsOf(td), th: td.tagName === 'TH' })));
+        const rows = [...n.rows].map((tr) => [...tr.cells].map((td) => ({ runs: runsOf(td), th: td.tagName === 'TH', colspan: Math.max(1, +td.colSpan || 1), rowspan: Math.max(1, +td.rowSpan || 1), align: (td.style && td.style.textAlign) || td.getAttribute('align') || '' })));
         if (rows.length) blocks.push({ table: rows });
       } else if (tag === 'img') {
-        if (n.dataset.bc) blocks.push({ runs: [{ img: n.dataset.bc }] });
+        if (n.dataset.bc) blocks.push({ runs: [{ img: n.dataset.bc }], align });
       } else if (tag === 'hr') blocks.push({ pageBreak: true });
       else if (tag === 'ul' || tag === 'ol') walk(n, listDepth + 1);
       else if (BLOCK_CONTAINERS.has(tag) && [...n.children].some((c) => BLOCK_TAGS.has(c.tagName.toLowerCase()))) walk(n, listDepth);
-      else if (n.textContent.trim() || n.querySelector('img')) blocks.push({ runs: runsOf(n) });
+      else if (n.textContent.trim() || n.querySelector('img')) blocks.push({ runs: runsOf(n), align });
     }
   };
   walk(root, -1);
@@ -2000,7 +2404,11 @@ async function prepareImages(root) {
       const el = await imageFromUrl(src);
       const m = src.match(/^data:image\/(png|jpe?g);base64,(.*)$/i);
       const id = 'img' + (++n);
-      images[id] = { id, ext: m[1].toLowerCase() === 'png' ? 'png' : 'jpeg', b64: m[2], w: el.naturalWidth || 300, h: el.naturalHeight || 200 };
+      // размер: из атрибутов (так он задан в исходном документе), иначе по самой картинке
+      const aw = parseFloat(img.getAttribute('width')), ah = parseFloat(img.getAttribute('height'));
+      const nw = el.naturalWidth || 300, nh = el.naturalHeight || 200;
+      const w = aw > 0 ? aw : ah > 0 ? ah * nw / nh : nw, h = ah > 0 ? ah : aw > 0 ? aw * nh / nw : nh;
+      images[id] = { id, ext: m[1].toLowerCase() === 'png' ? 'png' : 'jpeg', b64: m[2], w, h };
       img.dataset.bc = id;
     } catch { img.remove(); }
   }
@@ -2017,24 +2425,51 @@ function docxRun(r, b, ctx) {
     const n = Object.keys(ctx.images).indexOf(r.img) + 1;
     return `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${n}" name="Рисунок ${n}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${n}" name="${im.id}.${im.ext}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId_${im.id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
   }
-  const rpr = (r.b ? '<w:b/>' : '') + (r.i ? '<w:i/>' : '') + (r.u ? '<w:u w:val="single"/>' : '') +
-    (b.mono ? '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>' : '');
+  const rpr = (b.mono || r.mono ? '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>' : '') +
+    (r.b ? '<w:b/>' : '') + (r.i ? '<w:i/>' : '') + (r.s ? '<w:strike/>' : '') + (r.u ? '<w:u w:val="single"/>' : '') +
+    (r.va ? `<w:vertAlign w:val="${r.va}"/>` : '');
   return `<w:r>${rpr ? `<w:rPr>${rpr}</w:rPr>` : ''}<w:t xml:space="preserve">${escapeXml(r.text)}</w:t></w:r>`;
 }
 
 function docxTable(rows, ctx) {
-  const cols = Math.max(...rows.map((r) => r.length));
+  // сетка с учётом объединений: colspan → gridSpan, rowspan → vMerge
+  const grid = [];
+  rows.forEach((r, ri) => {
+    grid[ri] = grid[ri] || [];
+    let c = 0;
+    for (const cell of r) {
+      while (grid[ri][c]) c++;
+      for (let dr = 0; dr < cell.rowspan; dr++) for (let dc = 0; dc < cell.colspan; dc++) {
+        grid[ri + dr] = grid[ri + dr] || [];
+        grid[ri + dr][c + dc] = dr === 0 && dc === 0 ? { cell } : { cover: cell, first: dc === 0, origin: dr === 0 };
+      }
+      c += cell.colspan;
+    }
+  });
+  const cols = Math.max(1, ...grid.map((r) => r.length));
   const border = (s) => `<w:${s} w:val="single" w:sz="4" w:space="0" w:color="808080"/>`;
-  const cellXml = (c) => {
+  const jc = (a) => ({ center: 'center', right: 'right', justify: 'both' }[a] || '');
+  const cellXml = (c, span, merge) => {
     // абзацы внутри ячейки разделены переводами строки
     const paras = [[]];
     for (const r of (c ? c.runs : [])) { if (r.br) paras.push([]); else paras[paras.length - 1].push(c.th && !r.img ? { ...r, b: true } : r); }
-    const ps = paras.filter((p, i) => p.length || i === 0).map((p) => `<w:p>${p.map((r) => docxRun(r, {}, ctx)).join('')}</w:p>`).join('');
-    return `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>${ps || '<w:p/>'}</w:tc>`;
+    const al = c && jc(c.align || (c.th ? 'center' : ''));
+    const ps = paras.filter((p, i) => p.length || i === 0).map((p) => `<w:p>${al ? `<w:pPr><w:jc w:val="${al}"/></w:pPr>` : ''}${p.map((r) => docxRun(r, {}, ctx)).join('')}</w:p>`).join('');
+    return `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/>${span > 1 ? `<w:gridSpan w:val="${span}"/>` : ''}${merge || ''}</w:tcPr>${ps || '<w:p/>'}</w:tc>`;
+  };
+  const rowXml = (r) => {
+    let out = '';
+    for (let c = 0; c < cols; c++) {
+      const g = r[c];
+      if (!g) { out += cellXml(null, 1); continue; }
+      if (g.cell) { out += cellXml(g.cell, g.cell.colspan, g.cell.rowspan > 1 ? '<w:vMerge w:val="restart"/>' : ''); c += g.cell.colspan - 1; continue; }
+      if (g.first && !g.origin) { out += cellXml(null, g.cover.colspan, '<w:vMerge/>'); c += g.cover.colspan - 1; }
+    }
+    return out;
   };
   return `<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(border).join('')}</w:tblBorders><w:tblCellMar><w:left w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr>` +
     `<w:tblGrid>${'<w:gridCol/>'.repeat(cols)}</w:tblGrid>` +
-    rows.map((r) => `<w:tr>${Array.from({ length: cols }, (_, i) => cellXml(r[i])).join('')}</w:tr>`).join('') +
+    grid.map((r, i) => `<w:tr>${i === 0 && rows[0] && rows[0].every((c) => c.th) ? '<w:trPr><w:tblHeader/></w:trPr>' : ''}${rowXml(r)}</w:tr>`).join('') +
     '</w:tbl><w:p/>';
 }
 
@@ -2046,6 +2481,8 @@ function blockToXml(b, ctx) {
   const ppr = [];
   if (b.style) ppr.push(`<w:pStyle w:val="${b.style}"/>`);
   if (b.indent >= 0) ppr.push(`<w:ind w:left="${360 * (b.indent + 1)}"/>`);
+  const jc = { center: 'center', right: 'right', justify: 'both' }[b.align];
+  if (jc) ppr.push(`<w:jc w:val="${jc}"/>`);
   return `<w:p>${ppr.length ? `<w:pPr>${ppr.join('')}</w:pPr>` : ''}${runs.map((r) => docxRun(r, b, ctx)).join('')}</w:p>`;
 }
 
@@ -2209,6 +2646,9 @@ async function htmlToFb2(html, title) {
       if (r.br) { flush(); continue; }
       if (r.img) { flush(); if (images[r.img]) out.push(`<image l:href="#${r.img}"/>`); continue; }
       let t = escapeXml(r.text);
+      if (r.va === 'superscript') t = `<sup>${t}</sup>`;
+      if (r.va === 'subscript') t = `<sub>${t}</sub>`;
+      if (r.s) t = `<strikethrough>${t}</strikethrough>`;
       if (r.b) t = `<strong>${t}</strong>`;
       if (r.i) t = `<emphasis>${t}</emphasis>`;
       cur += t;
@@ -2227,7 +2667,8 @@ async function htmlToFb2(html, title) {
     if (b.table) {
       sec.body.push('<table>' + b.table.map((row) => '<tr>' + row.map((c) => {
         const t = c.th ? 'th' : 'td';
-        return `<${t}>${inline(c.runs)}</${t}>`;
+        // объединённые ячейки FB2 понимает так же, как HTML
+        return `<${t}${c.colspan > 1 ? ` colspan="${c.colspan}"` : ''}${c.rowspan > 1 ? ` rowspan="${c.rowspan}"` : ''}>${inline(c.runs)}</${t}>`;
       }).join('') + '</tr>').join('') + '</table>');
     } else if (b.style === 'Heading3') sec.body.push(`<subtitle>${inline(b.runs)}</subtitle>`);
     else sec.body.push(...paras(b.runs));
@@ -2272,7 +2713,12 @@ async function convertDoc(file, ext, target, opts, onProgress, onStatus, htmlOve
   }
 
   // htmlOverride — текст, отредактированный пользователем в конвертере
-  const html = htmlOverride ?? await docToHtml(file, ext, onProgress, onStatus);
+  let html = htmlOverride ?? await docToHtml(file, ext, onProgress, onStatus);
+  // формулы: в HTML остаются настоящими (MathML), в TXT/Markdown — линейной записью, в остальных — картинками
+  if (typeof mathToImages === 'function' && /<math[\s>]/i.test(html)) {
+    if (target === 'txt' || target === 'md') html = mathToLinear(html);
+    else if (target !== 'html') { onStatus('Формулы…'); html = await mathToImages(html); }
+  }
   // Word, RTF, ODT, книги… → JPG/PNG: сначала PDF, затем его страницы картинками
   if (target === 'png' || target === 'jpg') {
     onStatus('Вёрстка страниц…');
@@ -2940,6 +3386,7 @@ async function convertFileTo(file, target, onStatus = () => {}) {
   const opts = getOptions(), onProgress = () => {};
   let res;
   if (target === 'spdf') res = await searchablePdf(file, canon(item.ext), onProgress, onStatus);
+  else if (item.cat === 'image' && target === 'xlsx') res = await imageToXlsx(file, canon(item.ext), opts, onProgress, onStatus);
   else switch (item.cat) {
     case 'image': res = await convertImage(file, canon(item.ext), target, opts, onProgress, onStatus); break;
     case 'data': res = await convertData(file, item.ext, target); break;
@@ -2966,6 +3413,9 @@ async function convertItem(item) {
     if (target === 'spdf') {
       const src = item.editedImage ? new File([item.editedImage], item.outBase + '.png', { type: 'image/png' }) : file;
       res = await searchablePdf(src, item.editedImage ? 'png' : canon(ext), onProgress, onStatus);
+    } else if (item.cat === 'image' && target === 'xlsx') {
+      const src = item.editedImage ? new File([item.editedImage], item.outBase + '.png', { type: 'image/png' }) : file;
+      res = await imageToXlsx(src, item.editedImage ? 'png' : canon(ext), opts, onProgress, onStatus);
     } else switch (item.cat) {
       case 'image':
         // фото, отредактированное в конвертере (обрезка, поворот, размер, фон), хранится как PNG
