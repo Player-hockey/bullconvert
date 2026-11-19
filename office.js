@@ -50,6 +50,37 @@ function blipsIn(u8, from, to) {
   return out;
 }
 
+/**
+ * Векторная картинка (WMF/EMF — формулы, схемы) из записи OfficeArt по смещению записи.
+ * Возвращает { ext, data, compressed } — данные распаковываются позже (pako), рисуются metafileToPng.
+ */
+function metaBlipAt(u8, i) {
+  if (i + 8 > u8.length) return null;
+  const dv = dvOf(u8);
+  const type = dv.getUint16(i + 2, true), inst = dv.getUint16(i, true) >> 4, len = dv.getUint32(i + 4, true);
+  if (type !== 0xF01A && type !== 0xF01B) return null;
+  const end = Math.min(u8.length, i + 8 + len);
+  const p = i + 8 + ((inst === 0x3D5 || inst === 0x217) ? 32 : 16);
+  if (p + 34 > end) return null;
+  return { ext: type === 0xF01A ? 'emf' : 'wmf', data: u8.subarray(p + 34, end), compressed: u8[p + 32] === 0 };
+}
+function metaBlipsIn(u8, from, to) {
+  const dv = dvOf(u8);
+  for (let i = from; i + 8 <= to; i++) {
+    const t = dv.getUint16(i + 2, true);
+    if ((t === 0xF01A || t === 0xF01B) && (dv.getUint16(i, true) & 0xF) === 0) { const m = metaBlipAt(u8, i); if (m) return m; }
+  }
+  return null;
+}
+async function metaToUrl(m) {
+  try {
+    let bytes = m.data;
+    if (m.compressed) { await loadLib('pako'); bytes = pako.inflate(bytes); }
+    const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    return typeof metafileToPng === 'function' ? await metafileToPng(buf, m.ext) : null;
+  } catch { return null; }
+}
+
 /* ============================ Word 97–2003 ============================ */
 
 /** Свойства из списка sprm (абзац/символы) — только нужные нам */
@@ -84,7 +115,7 @@ function parsePrls(u8, p, end) {
   return out;
 }
 
-function wordDocToHtml(cfb) {
+async function wordDocToHtml(cfb, onStatus) {
   const wd = cfbStream(cfb, 'WordDocument');
   if (!wd || wd.length < 0x200) throw new Error('Повреждённый документ Word.');
   const dv = dvOf(wd);
@@ -175,8 +206,10 @@ function wordDocToHtml(cfb) {
   const picAt = (off) => {
     if (!data || off == null || off + 4 > data.length) return null;
     const lcb = dvOf(data).getUint32(off, true);
-    const urls = blipsIn(data, off, Math.min(data.length, off + lcb));
-    return urls[0] || null;
+    const to = Math.min(data.length, off + lcb);
+    const urls = blipsIn(data, off, to);
+    // нет PNG/JPEG — ищем векторную картинку (формулы редактора формул хранятся как WMF)
+    return urls[0] || metaBlipsIn(data, off, to);
   };
 
   // «плавающие» рисунки (символ 0x08): позиция → номер фигуры → картинка в хранилище OfficeArt
@@ -215,7 +248,7 @@ function wordDocToHtml(cfb) {
       for (const [cp, spid] of spidAt) {
         const off = bse[(pibOf.get(spid) || 0) - 1];
         if (off == null || off + 8 > wd.length) continue;
-        const url = blipDataUrl(wd, off + 8, Math.min(wd.length, off + 8 + dv.getUint32(off + 4, true)));
+        const url = blipDataUrl(wd, off + 8, Math.min(wd.length, off + 8 + dv.getUint32(off + 4, true))) || metaBlipAt(wd, off);
         if (url) floating.set(cp, url);
       }
     }
@@ -228,7 +261,7 @@ function wordDocToHtml(cfb) {
   const push = (text, chp) => {
     const fmt = { b: on(chp.b), i: on(chp.i), u: !!chp.u && chp.u !== 0x80 };
     const last = runs[runs.length - 1];
-    if (last && !last.img && last.b === fmt.b && last.i === fmt.i && last.u === fmt.u) last.text += text;
+    if (last && !last.img && !last.meta && last.b === fmt.b && last.i === fmt.i && last.u === fmt.u) last.text += text;
     else runs.push({ text, ...fmt });
   };
   for (const pc of pieces) {
@@ -253,7 +286,8 @@ function wordDocToHtml(cfb) {
       const chp = find(chpRuns, fc);
       if (ch === '\x01' || ch === '\x08') {
         const url = ch === '\x01' ? picAt(chp.pic) : floating.get(cp);
-        if (url) runs.push({ img: url }); // остальное — привязки объектов, их картинка обычно стоит рядом
+        if (typeof url === 'string') runs.push({ img: url }); // остальное — привязки объектов, их картинка обычно стоит рядом
+        else if (url) runs.push({ img: null, meta: url });   // WMF/EMF — нарисуем после разбора текста
         continue;
       }
       if (ch === '\x0b') { push('\n', chp); continue; }
@@ -265,7 +299,15 @@ function wordDocToHtml(cfb) {
   }
   if (runs.length) paras.push({ runs, end: '\r', pap: {} });
 
+  // векторные картинки (WMF/EMF) рисуем после разбора: это асинхронно
+  const metaRuns = paras.flatMap((p) => p.runs.filter((r) => r.meta));
+  if (metaRuns.length) {
+    if (onStatus) onStatus(`Рисунки и формулы: ${metaRuns.length}…`);
+    for (const r of metaRuns) r.img = await metaToUrl(r.meta);
+  }
+
   const runsHtml = (rs) => rs.map((r) => {
+    if (r.meta && !r.img) return '';
     if (r.img) return `<img src="${r.img}">`;
     let h = escapeHtml(r.text).replace(/\n/g, '<br>');
     if (r.u) h = `<u>${h}</u>`;
@@ -273,7 +315,7 @@ function wordDocToHtml(cfb) {
     if (r.b) h = `<b>${h}</b>`;
     return h;
   }).join('');
-  const hasContent = (rs) => rs.some((r) => r.img || r.text.trim());
+  const hasContent = (rs) => rs.some((r) => r.img || (r.text && r.text.trim()));
 
   // если свойства абзацев не прочитались — таблицы угадываем по символам ячеек
   const papKnown = papRuns.length > 0;
@@ -461,7 +503,7 @@ async function legacyOfficeToHtml(file, ext, onProgress, onStatus) {
   const cfb = await readCfb(file);
   if (!cfb) throw new Error('Повреждённый файл Office.');
   if (cfbStream(cfb, 'EncryptedPackage')) throw new Error('Файл защищён паролем — снимите пароль и повторите.');
-  if (cfbStream(cfb, 'WordDocument')) return wordDocToHtml(cfb);
+  if (cfbStream(cfb, 'WordDocument')) return wordDocToHtml(cfb, onStatus);
   if (cfbStream(cfb, 'PowerPoint Document')) return pptToHtml(cfb, onStatus);
   if (cfbStream(cfb, 'Workbook') || cfbStream(cfb, 'Book')) throw new Error('Это таблица Excel — переименуйте файл в .xls и добавьте снова.');
   throw new Error('Файл не похож на документ Word или PowerPoint.');

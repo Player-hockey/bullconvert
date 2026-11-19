@@ -163,13 +163,13 @@ async function loadToolFile(tab, file) {
 function renderMerge() {
   const body = $('toolBody');
   const rows = T.merge.map((f, i) => `<li class="m-row" draggable="true" data-i="${i}">
-      <span class="badge ${extOf(f.name) === 'pdf' ? 'doc' : 'image'}">${escapeHtml(extOf(f.name) || '?')}</span>
+      <span class="badge ${extOf(f.name) === 'pdf' ? 'doc' : mergeIsImage(f) ? 'image' : 'data'}">${escapeHtml(extOf(f.name) || '?')}</span>
       <span class="m-name">${escapeHtml(f.name)}</span><span class="muted">${formatSize(f.size)}</span>
       <span class="m-btns"><button class="btn sm" data-a="up" data-i="${i}" ${i ? '' : 'disabled'}>↑</button>
       <button class="btn sm" data-a="down" data-i="${i}" ${i < T.merge.length - 1 ? '' : 'disabled'}>↓</button>
       <button class="btn sm ghost" data-a="del" data-i="${i}">✕</button></span></li>`).join('');
-  body.innerHTML = `<p class="muted">Соберите несколько PDF и картинок (JPG, PNG, HEIC…) в один PDF. Порядок меняется стрелками или перетаскиванием.</p>
-    <div class="tool-drop" id="mergeDrop">${filePickerHtml('mergePick', '.pdf,image/*,.heic,.heif', true, '+ Добавить файлы')}</div>
+  body.innerHTML = `<p class="muted">Соберите в один PDF что угодно: PDF, фото (JPG, PNG, HEIC…), Word (DOCX, DOC), Excel, презентации, тексты, книги. Каждый файл сначала переводится в PDF. Порядок меняется стрелками или перетаскиванием.</p>
+    <div class="tool-drop" id="mergeDrop">${filePickerHtml('mergePick', '', true, '+ Добавить файлы')}</div>
     <ol class="m-list" id="mergeList">${rows}</ol>
     <label class="chk"><input type="checkbox" id="mergeA4"> Картинки — на страницы A4 (иначе страница по размеру картинки)</label>
     <div class="tool-actions"><button class="btn primary" id="mergeGo" ${T.merge.length > 1 ? '' : 'disabled'}>Объединить и скачать</button>
@@ -193,6 +193,9 @@ function renderMerge() {
   $('mergeGo').onclick = mergeFiles;
 }
 
+// картинки (кроме SVG/TIFF — их сначала переводим конвертером) кладутся на страницу напрямую
+const mergeIsImage = (f) => ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'heic', 'heif', 'avif'].includes(extOf(f.name)) || (/^image\/(jpeg|png|webp|gif|bmp|heic|heif|avif)$/.test(f.type) && !extOf(f.name));
+
 async function mergeFiles() {
   const btn = $('mergeGo');
   btn.disabled = true;
@@ -205,6 +208,11 @@ async function mergeFiles() {
       toolMsg(`Добавляю ${i + 1} из ${T.merge.length}: ${f.name}`);
       if (extOf(f.name) === 'pdf' || f.type === 'application/pdf') {
         const src = await loadPdfLibDoc(await readBytes(f));
+        (await out.copyPages(src, src.getPageIndices())).forEach((p) => out.addPage(p));
+      } else if (!mergeIsImage(f)) {
+        // документ, таблица, презентация, книга… → сначала в PDF тем же конвертером
+        const pdf = await convertFileTo(f, 'pdf', (s) => toolMsg(`${i + 1} из ${T.merge.length}: ${f.name} — ${s}`));
+        const src = await loadPdfLibDoc(new Uint8Array(await pdf.arrayBuffer()));
         (await out.copyPages(src, src.getPageIndices())).forEach((p) => out.addPage(p));
       } else {
         const im = await imageForPdf(f);
@@ -1096,6 +1104,11 @@ document.querySelectorAll('#editDlg [data-cmd]').forEach((b) => {
 /* ================================ Привязка к странице ================================ */
 
 $('toolsBtn').onclick = () => openTools(T.tab);
+// «Всё в один PDF» из списка файлов: открываем объединение с файлами списка в том же порядке
+$('mergeAll').onclick = () => {
+  T.merge = items.filter((i) => i.cat && i.cat !== 'archive').map((i) => (i.editedImage ? new File([i.editedImage], `${i.outBase}.png`, { type: 'image/png' }) : i.file));
+  openTools('merge');
+};
 document.querySelectorAll('#toolsDlg .tab').forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
 window.addEventListener('resize', () => {
   if (!$('toolsDlg').open) return;

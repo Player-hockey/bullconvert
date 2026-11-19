@@ -149,6 +149,87 @@ $('imgBg').onclick = async () => {
   finally { btn.disabled = false; }
 };
 
+/**
+ * Фото документа → «скан»: оцениваем освещённость бумаги (светлый фон с размытием),
+ * делим на неё — тени и неровный свет уходят. mode: 'bw' — чистый чёрно-белый, 'color' — выровненные цвета.
+ */
+function scanFilter(src, mode) {
+  const w = src.width, h = src.height;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
+  g.drawImage(src, 0, 0);
+  const im = g.getImageData(0, 0, w, h), d = im.data;
+  // уменьшенная карта яркости
+  const sw = Math.max(8, Math.round(w / 24)), sh = Math.max(8, Math.round(h / 24));
+  const s = document.createElement('canvas');
+  s.width = sw; s.height = sh;
+  const sg = s.getContext('2d', { willReadFrequently: true });
+  sg.drawImage(c, 0, 0, sw, sh);
+  const sd = sg.getImageData(0, 0, sw, sh).data;
+  // карты фона: яркость (ч/б) или каждый цвет отдельно (тогда желтоватая бумага становится белой)
+  const chans = mode === 'bw' ? [[0.299, 0.587, 0.114]] : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const maps = chans.map(([a, b, cc]) => { const m = new Float32Array(sw * sh); for (let i = 0; i < sw * sh; i++) m[i] = sd[i * 4] * a + sd[i * 4 + 1] * b + sd[i * 4 + 2] * cc; return m; });
+  // фон = максимум по окрестности (бумага светлее текста), затем сглаживание
+  const pass = (src, fn, r) => {
+    const out = new Float32Array(src.length);
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+      let acc = fn === 'max' ? 0 : 0, n = 0;
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        const xx = Math.min(sw - 1, Math.max(0, x + dx)), yy = Math.min(sh - 1, Math.max(0, y + dy));
+        const v = src[yy * sw + xx];
+        if (fn === 'max') acc = Math.max(acc, v); else { acc += v; n++; }
+      }
+      out[y * sw + x] = fn === 'max' ? acc : acc / n;
+    }
+    return out;
+  };
+  const bgMaps = maps.map((m) => pass(pass(m, 'max', 2), 'avg', 2));
+  const bgAt = (x, y, L = bgMaps[0]) => {
+    const fx = Math.min(sw - 1.001, Math.max(0, x / w * sw - 0.5)), fy = Math.min(sh - 1.001, Math.max(0, y / h * sh - 0.5));
+    const x0 = Math.floor(fx), y0 = Math.floor(fy), ax = fx - x0, ay = fy - y0;
+    const a = L[y0 * sw + x0], b = L[y0 * sw + x0 + 1], cc = L[(y0 + 1) * sw + x0], dd = L[(y0 + 1) * sw + x0 + 1];
+    return Math.max(30, (a * (1 - ax) + b * ax) * (1 - ay) + (cc * (1 - ax) + dd * ax) * ay);
+  };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4;
+    if (mode === 'bw') {
+      const bg = bgAt(x, y);
+      const ratio = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) / bg;
+      // мягкий порог: текст чёрный, бумага белая, края букв сглажены
+      const t = Math.min(1, Math.max(0, (ratio - 0.62) / 0.26));
+      const v = Math.round(255 * t * t * (3 - 2 * t));
+      d[i] = d[i + 1] = d[i + 2] = v;
+    } else {
+      for (let k = 0; k < 3; k++) {
+        const v = d[i + k] / bgAt(x, y, bgMaps[k]) * 255;
+        d[i + k] = Math.max(0, Math.min(255, (v - 20) * 1.1)); // немного контраста
+      }
+    }
+  }
+  g.putImageData(im, 0, 0);
+  return c;
+}
+
+async function applyScanFilter(mode) {
+  const btns = [$('imgScan'), $('imgLight')];
+  btns.forEach((b) => (b.disabled = true));
+  $('imgInfo').textContent = 'Обработка…';
+  try {
+    await new Promise((r) => setTimeout(r, 30)); // дать надписи обновиться
+    const out = scanFilter(ieResult(), mode);
+    URL.revokeObjectURL(IE.url);
+    const { img, url } = await loadImage(await canvasToBlob(out, 'image/png'));
+    Object.assign(IE, { img, url, rot: 0, flip: false, crop: null });
+    $('imgW').value = '';
+    drawImageEditor();
+  } catch (e) { $('imgInfo').textContent = e.message; }
+  finally { btns.forEach((b) => (b.disabled = false)); }
+}
+$('imgScan').onclick = () => applyScanFilter('bw');
+$('imgLight').onclick = () => applyScanFilter('color');
+
 $('imgSave').onclick = async () => {
   const item = IE.item;
   item.editedImage = await canvasToBlob(ieResult(), 'image/png');

@@ -48,7 +48,7 @@ const I18N_EN = {
   'запретить печать': 'disallow printing', 'запретить копирование текста': 'disallow copying text',
   'удалить метаданные, комментарии, вложения': 'remove metadata, comments, attachments',
   'Сохранить правки': 'Save changes', 'Вернуть оригинал': 'Restore original', 'Сохранить': 'Save', 'Без обрезки': 'No trim',
-  'Сбросить обрезку': 'Reset crop', '✨ Убрать фон': '✨ Remove background', 'Ширина, px': 'Width, px', 'Не больше, КБ': 'Max size, KB', 'как есть': 'as is',
+  'Сбросить обрезку': 'Reset crop', '✨ Убрать фон': '✨ Remove background', 'Ширина, px': 'Width, px', 'Не больше, КБ': 'Max size, KB', 'как есть': 'as is', 'авто': 'auto', 'любой': 'any',
   'Чтобы обрезать — выделите нужную область мышью или пальцем.': 'To crop, select the area with your mouse or finger.',
   'Начало': 'Start', 'Конец': 'End', '⇤ текущий момент': '⇤ current time', 'текущий момент ⇥': 'current time ⇥', 'до конца': 'to the end',
   '🕘 История конвертаций': '🕘 Conversion history', 'Очистить историю': 'Clear history',
@@ -63,6 +63,10 @@ const I18N_EN = {
   'На экране появится значок BullConvert с быком — он открывается как отдельное приложение.': 'A BullConvert bull icon appears on your home screen — it opens as a separate app.',
   '✅ Этот сайт работает прямо на вашем устройстве — файлы никуда не загружаются.': '✅ This site runs right on your device — files are never uploaded.',
   'Проверяю…': 'Checking…', 'Закрыть': 'Close',
+  '📄 Всё в один PDF': '📄 All into one PDF', 'Всё в один PDF': 'All into one PDF',
+  'Соберите в один PDF что угодно: PDF, фото (JPG, PNG, HEIC…), Word (DOCX, DOC), Excel, презентации, тексты, книги. Каждый файл сначала переводится в PDF. Порядок меняется стрелками или перетаскиванием.': 'Combine anything into one PDF: PDFs, photos (JPG, PNG, HEIC…), Word (DOCX, DOC), Excel, presentations, texts, books. Each file is converted to PDF first. Reorder with arrows or drag and drop.',
+  'PDF с поиском (распознать текст)': 'Searchable PDF (OCR)', '📄 Скан документа': '📄 Scan document', '☀ Выровнять свет': '☀ Even out lighting', 'Обработка…': 'Processing…',
+  'текст уже был': 'text was already there',
   // старые Word/PowerPoint
   'Старый Word и PowerPoint': 'Old Word & PowerPoint', 'Чтение старого формата Office…': 'Reading old Office format…',
   'Office не ответил — конвертирую в браузере…': 'Office did not respond — converting in the browser…',
@@ -83,6 +87,8 @@ const I18N_RULES = [
   [/^Загрузка шрифта (\w+)…$/, 'Loading font $1…'], [/^Скачиваю шрифты документов: (\d+) из (\d+)…$/, 'Downloading document fonts: $1 of $2…'],
   [/^Надписи и рисунки поверх текста…$/, 'Placing text boxes and floating pictures…'],
   [/^ℹ Word не ответил — PDF собран в BullConvert$/, 'ℹ Word did not respond — PDF made by BullConvert'],
+  [/^распознано стр\.: (\d+)$/, 'pages recognized: $1'], [/^Рисунки и формулы: (\d+)…$/, 'Pictures and formulas: $1…'],
+  [/^(\d+) из (\d+): (.*) — (.*)$/, '$1 of $2: $3 — $4'], [/^Добавляю (\d+) из (\d+): (.*)$/, 'Adding $1 of $2: $3'],
   [/^⚠ не перенесено картинок: (\d+) \(формат EMF\/WMF\)$/, '⚠ images not transferred: $1 (EMF/WMF format)'],
   [/^⚠ не нарисовано (.*)$/, (m, x) => '⚠ not drawn: ' + x.replace('диаграмм', 'charts').replace('картинок', 'images')], [/^(\d+) стр\. в ZIP$/, '$1 pages in ZIP'],
 ];

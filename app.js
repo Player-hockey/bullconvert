@@ -85,11 +85,11 @@ function targetsFor(cat, ext) {
   const not = (list) => list.filter((t) => t !== canon(ext));
   switch (cat) {
     // txt/docx у фото — распознавание текста со снимка
-    case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'nobg', 'gif', 'tiff', 'bmp', 'ico', 'txt', 'docx']);
+    case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'spdf', 'nobg', 'gif', 'tiff', 'bmp', 'ico', 'txt', 'docx']);
     case 'data':  return not(['pdf', 'xlsx', 'docx', 'csv', 'tsv', 'json', 'yaml', 'xml', 'html', 'md']);
     case 'doc':
-      if (ext === 'pdf') return ['docx', 'xlsx', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
-      if (canon(ext) === 'djvu') return ['pdf', 'png', 'jpg', 'docx', 'txt', 'md', 'html', 'epub', 'fb2'];
+      if (ext === 'pdf') return ['docx', 'spdf', 'xlsx', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
+      if (canon(ext) === 'djvu') return ['pdf', 'spdf', 'png', 'jpg', 'docx', 'txt', 'md', 'html', 'epub', 'fb2'];
       // слайды рисуются в браузере; на компьютере владельца с Office — ещё и точно через PowerPoint/Word
       if (canon(ext) === 'pptx') return ['pdf', 'jpg', 'docx', 'txt', 'md', 'html'];
       if (canon(ext) === 'ppt') return ['pdf', ...(pcFeatures && officeAvailable ? ['pptx', 'jpg'] : []), 'docx', 'txt', 'md', 'html'];
@@ -113,6 +113,7 @@ function targetsFor(cat, ext) {
 const TARGET_LABELS = {
   nobg: 'PNG без фона',
   frames: 'Кадры JPG (ZIP)',
+  spdf: 'PDF с поиском (распознать текст)',
 };
 const targetLabel = (t) => TARGET_LABELS[t] || t.toUpperCase();
 
@@ -329,6 +330,9 @@ async function imageSource(file, ext) {
     catch { throw new Error('Не удалось прочитать HEIC-фото.'); }
     return Array.isArray(out) ? out[0] : out;
   }
+  // без правильного типа браузер не откроет SVG (файлы из архивов, «без расширения», с телефона)
+  const types = { svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', ico: 'image/x-icon', avif: 'image/avif' };
+  if (types[ext] && file.type !== types[ext]) return new Blob([file], { type: types[ext] });
   return file;
 }
 
@@ -843,6 +847,78 @@ async function ocrCanvas(canvas, onStatus, onFraction) {
   }
 }
 
+/**
+ * «PDF с поиском»: сканы и фото → PDF, в котором текст можно искать, выделять и копировать.
+ * Страница — картинка, поверх неё невидимый распознанный текст на тех же местах.
+ * У PDF страницы, где текст уже есть, копируются без изменений.
+ */
+async function searchablePdf(file, ext, onProgress, onStatus) {
+  const { PDFDocument } = await getPdfLib();
+  const out = await PDFDocument.create();
+  const font = await embedCyrFont(out);
+  let srcDoc = null;
+  if (ext === 'pdf') srcDoc = await loadPdfLibDoc(new Uint8Array(await file.arrayBuffer()));
+  // источники страниц: { canvas(), wPt, hPt, keep }
+  const pages = [];
+  if (ext === 'pdf' || ext === 'djvu') {
+    for await (const pg of pagesOf(file, ext)) pages.push(pg);
+  } else if (ext === 'tiff') {
+    for (const c of await tiffCanvases(file)) pages.push({ canvas: () => c });
+  } else {
+    const src = await imageSource(file, ext);
+    const { img, url } = await loadImage(src);
+    const c = document.createElement('canvas');
+    // мелкие снимки увеличиваем: распознавание точнее примерно от 1500 точек по ширине
+    const k = Math.min(3, Math.max(1, 1600 / Math.max(img.naturalWidth, 1)));
+    c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    pages.push({ canvas: () => c });
+  }
+  const worker = await getOcrWorker();
+  let recognized = 0;
+  for (let i = 0; i < pages.length; i++) {
+    const pg = pages[i];
+    // страница PDF уже с текстом — переносим как есть
+    if (srcDoc && pg.text && pg.text.replace(/\s/g, '').length >= 10) {
+      const [copy] = await out.copyPages(srcDoc, [i]);
+      out.addPage(copy);
+      onProgress((i + 1) / pages.length);
+      continue;
+    }
+    onStatus(`Распознавание текста: страница ${i + 1} из ${pages.length}…`);
+    const c = await pg.canvas();
+    ocrLogger = (m) => { if (m.status === 'recognizing text') onProgress((i + m.progress) / pages.length); };
+    let data;
+    try { ({ data } = await worker.recognize(c, {}, { text: true, blocks: true })); } finally { ocrLogger = null; }
+    recognized++;
+    // размер страницы: как у исходного PDF, иначе A4 по ширине картинки
+    let wPt, hPt;
+    if (srcDoc) ({ width: wPt, height: hPt } = srcDoc.getPage(i).getSize());
+    else { wPt = 595.28; hPt = wPt * c.height / c.width; }
+    const k = wPt / c.width;
+    const jpg = await out.embedJpg(await (await canvasToBlob(c, 'image/jpeg', 0.85)).arrayBuffer());
+    const page = out.addPage([wPt, hPt]);
+    page.drawImage(jpg, { x: 0, y: 0, width: wPt, height: hPt });
+    const words = data.words || (data.blocks || []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines.flatMap((l) => l.words)));
+    for (const w of words) {
+      const t = (w.text || '').trim();
+      if (!t || w.confidence < 20) continue;
+      const { x0, y0, x1, y1 } = w.bbox;
+      const bw = (x1 - x0) * k, bh = (y1 - y0) * k;
+      if (bw <= 0 || bh <= 0) continue;
+      let size = bh * 0.95;
+      try { const w1 = font.widthOfTextAtSize(t, 1); if (w1 > 0) size = Math.min(size * 1.3, bw / w1); } catch { continue; }
+      try { page.drawText(t, { x: x0 * k, y: hPt - y1 * k + bh * 0.15, size: Math.max(1, size), font, opacity: 0 }); } catch { /* символ не из шрифта */ }
+    }
+    c.width = c.height = 0;
+    onProgress((i + 1) / pages.length);
+  }
+  out.setProducer('BullConvert');
+  const bytes = await out.save();
+  return { blob: new Blob([bytes], { type: 'application/pdf' }), ext: 'pdf', note: recognized ? `распознано стр.: ${recognized}` : 'текст уже был' };
+}
+
 /* ======================= Страницы PDF и DjVu ======================= */
 
 async function getPdfJs() {
@@ -877,8 +953,172 @@ async function* pdfPages(file, width = 1700) {
     const content = await page.getTextContent();
     let text = '';
     for (const it of content.items) text += it.str + (it.hasEOL ? '\n' : '');
-    yield { index: p, total: pdf.numPages, text, canvas: () => renderPdfPage(page, width) };
+    yield { index: p, total: pdf.numPages, text, content, canvas: () => renderPdfPage(page, width), html: () => pdfPageToHtml(page, content) };
   }
+}
+
+/**
+ * Страница PDF с текстовым слоем → HTML с настоящей структурой: строки собираются в абзацы
+ * (по межстрочным интервалам, отступам и концам строк), крупный текст — заголовки, жирный шрифт,
+ * выравнивание по центру, списки, перенос слов, картинки на своих местах.
+ */
+async function pdfPageToHtml(page, content) {
+  const vp = page.getViewport({ scale: 1 });
+  const H = vp.height;
+  // список операций: из него — положение картинок; заодно pdf.js загружает шрифты (нужны имена для «жирный»)
+  let ops = null;
+  try { ops = await page.getOperatorList(); } catch { /* без картинок */ }
+  const fontInfo = {};
+  const isBold = (fn) => {
+    if (fn in fontInfo) return fontInfo[fn];
+    let b = false;
+    try { const f = page.commonObjs.get(fn); b = /bold|black|heavy|semibold|demi/i.test((f && (f.name || f.loadedName)) || '') || !!(f && f.bold); } catch { /* шрифт не загружен */ }
+    return (fontInfo[fn] = b);
+  };
+
+  // элементы текста → строки
+  const els = content.items.filter((it) => it.str && it.str.trim() !== '' || (it.str === ' ')).map((it) => {
+    const [a, b, c, d, e, f] = it.transform;
+    const size = Math.hypot(c, d) || Math.hypot(a, b) || 10;
+    return { str: it.str, x: e, y: H - f, w: it.width, size, bold: isBold(it.fontName), vertical: Math.abs(b) > Math.abs(a) };
+  }).filter((e) => !e.vertical);
+  els.sort((p, q) => p.y - q.y || p.x - q.x);
+  const lines = [];
+  for (const e of els) {
+    const ln = lines.find((l) => Math.abs(l.y - e.y) < Math.min(l.size, e.size) * 0.45 && e.x > l.x0 - 2 * e.size);
+    if (ln) ln.items.push(e), (ln.size = Math.max(ln.size, e.size));
+    else lines.push({ y: e.y, size: e.size, items: [e], x0: e.x });
+  }
+  for (const l of lines) {
+    l.items.sort((p, q) => p.x - q.x);
+    l.x0 = l.items[0].x;
+    const last = l.items[l.items.length - 1];
+    l.x1 = last.x + last.w;
+    // текст строки с пробелами по зазорам между кусками
+    l.runs = [];
+    let prevEnd = null;
+    for (const it of l.items) {
+      let s = it.str;
+      if (prevEnd != null && it.x - prevEnd > it.size * 0.2 && !/\s$/.test(l.runs.map((r) => r.t).join('')) && !/^\s/.test(s)) s = ' ' + s;
+      const r = l.runs[l.runs.length - 1];
+      if (r && r.b === it.bold) r.t += s; else l.runs.push({ t: s, b: it.bold });
+      prevEnd = it.x + it.w;
+    }
+    // «математические» буквы (𝜆, 𝑥) есть не во всех шрифтах Word — заменяем обычными
+    for (const r of l.runs) r.t = r.t.replace(/[\u{1D400}-\u{1D7FF}]/gu, (ch) => ch.normalize('NFKC'));
+    l.text = l.runs.map((r) => r.t).join('').replace(/\s+/g, ' ').trim();
+    l.bold = l.runs.every((r) => r.b || !r.t.trim());
+  }
+  // номера страниц в колонтитулах в текст не берём
+  const textLines = lines.filter((l) => l.text && !(/^[-–—\s]*\d{1,4}[-–—\s]*$/.test(l.text) && (l.y > H * 0.9 || l.y < H * 0.08))).sort((p, q) => p.y - q.y);
+
+  // типичные размеры: основной шрифт, межстрочный интервал, поля текста
+  const median = (arr) => { if (!arr.length) return 0; const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  const bodySize = median(textLines.flatMap((l) => Array(Math.min(50, l.text.length)).fill(Math.round(l.size * 2) / 2))) || 11;
+  const gaps = [];
+  for (let i = 1; i < textLines.length; i++) {
+    const g = textLines[i].y - textLines[i - 1].y;
+    if (g > 0 && Math.abs(textLines[i].size - bodySize) < 1 && Math.abs(textLines[i - 1].size - bodySize) < 1) gaps.push(g);
+  }
+  const lineGap = median(gaps) || bodySize * 1.3;
+  const left = median(textLines.map((l) => Math.round(l.x0))) || 0;
+  const right = Math.max(...textLines.map((l) => l.x1), 0);
+
+  // строки → абзацы
+  const headingLike = (l) => l.size >= bodySize * 1.12 || (l.bold && l.text.length < 90);
+  const isCentered = (l) => l.x0 > left + l.size * 3 && Math.abs((l.x0 + l.x1) / 2 - (left + right) / 2) < l.size * 1.5;
+  const paras = [];
+  let cur = null;
+  // пункт списка: маркер, «1.», «2)», «а)» (но не «т. д.» и не инициалы)
+  const listRe = /^([•●▪■◦○∙·–—*]|\d{1,3}[.)]|[a-zа-яё]\))\s/i;
+  for (const l of textLines) {
+    const prev = cur && cur.lines[cur.lines.length - 1];
+    let br = !cur;
+    if (prev) {
+      const gap = l.y - prev.y;
+      if (gap > lineGap * 1.45 || gap < 0) br = true;                          // увеличенный интервал
+      else if (Math.abs(l.size - prev.size) > Math.max(1, prev.size * 0.12)) br = true; // другой размер шрифта
+      else if (l.bold !== prev.bold && (l.bold || prev.bold)) br = true;       // жирная строка-заголовок
+      else if (listRe.test(l.text)) br = true;                                 // пункт списка
+      else if (isCentered(l) !== isCentered(prev)) br = true;                  // другое выравнивание (заголовок → подпись)
+      // прошлая строка короткая — абзац кончился (кроме многострочных заголовков: у них все строки короткие)
+      else if (prev.x1 < right - prev.size * 4 && !/[,;:\-]$/.test(prev.text) && !(headingLike(prev) && headingLike(l))) br = true;
+      else if (l.x0 > left + l.size * 1.2 && Math.abs(prev.x0 - left) < l.size) br = true; // красная строка
+    }
+    if (br) { cur = { lines: [], size: l.size }; paras.push(cur); }
+    cur.lines.push(l);
+  }
+
+  const blocks = [];
+  for (const p of paras) {
+    let html = '';
+    for (let i = 0; i < p.lines.length; i++) {
+      const l = p.lines[i];
+      let part = l.runs.map((r) => (r.b && !p.lines.every((x) => x.bold) ? `<b>${escapeHtml(r.t)}</b>` : escapeHtml(r.t))).join('').replace(/\s+/g, ' ').trim();
+      if (i > 0) {
+        // перенос слова: «конвер-» + «тация» → «конвертация»
+        if (/[a-zа-яё]-$/i.test(html.replace(/<[^>]+>/g, '')) && /^[a-zа-яё]/.test(l.text)) html = html.replace(/-(<\/b>)?$/, '$1');
+        else html += ' ';
+      }
+      html += part;
+    }
+    const allBold = p.lines.every((x) => x.bold);
+    const x0 = Math.min(...p.lines.map((l) => l.x0)), x1 = Math.max(...p.lines.map((l) => l.x1));
+    const centered = x0 > left + p.size * 3 && Math.abs((x0 + x1) / 2 - (left + right) / 2) < p.size * 1.5;
+    const ratio = p.size / bodySize;
+    const text = p.lines.map((l) => l.text).join(' ');
+    let tag = 'p';
+    if (ratio >= 1.7) tag = 'h1';
+    else if (ratio >= 1.35) tag = 'h2';
+    else if ((ratio >= 1.12 || allBold) && text.length < 150 && p.lines.length <= 3) tag = 'h3';
+    if (tag === 'h3' && allBold && ratio < 1.12 && !/^[\dIVX]+[.)]?\s|^[А-ЯA-Z]/.test(text)) tag = 'p';
+    const body = tag === 'p' && allBold ? `<b>${html}</b>` : html;
+    const style = centered ? ' style="text-align:center"' : '';
+    if (listRe.test(text) && tag === 'p') blocks.push({ y: p.lines[0].y - p.size, html: `<p class="li"${style}>${body}</p>` });
+    else blocks.push({ y: p.lines[0].y - p.size, html: `<${tag}${style}>${body}</${tag}>` });
+  }
+
+  // картинки: положение по матрице преобразования, вырезаем с отрисованной страницы
+  const imgs = [];
+  if (ops) {
+    const OPS = pdfjsLib.OPS;
+    const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+    let ctm = [1, 0, 0, 1, 0, 0];
+    const stack = [];
+    for (let i = 0; i < ops.fnArray.length; i++) {
+      const fn = ops.fnArray[i], args = ops.argsArray[i];
+      if (fn === OPS.save) stack.push(ctm);
+      else if (fn === OPS.restore) ctm = stack.pop() || ctm;
+      else if (fn === OPS.transform) ctm = mul(ctm, args);
+      else if (fn === OPS.paintFormXObjectBegin) { stack.push(ctm); if (args && args[0]) ctm = mul(ctm, args[0]); }
+      else if (fn === OPS.paintFormXObjectEnd) ctm = stack.pop() || ctm;
+      else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject || fn === OPS.paintJpegXObject) {
+        const pts = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([u, v]) => [ctm[0] * u + ctm[2] * v + ctm[4], ctm[1] * u + ctm[3] * v + ctm[5]]);
+        const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+        const bx = Math.max(0, Math.min(...xs)), by = Math.max(0, H - Math.max(...ys));
+        const bw = Math.min(vp.width, Math.max(...xs)) - bx, bh = Math.min(H, H - Math.min(...ys)) - by;
+        if (bw < 24 || bh < 24) continue; // значки и линии
+        if (bw * bh > vp.width * H * 0.8 && textLines.length > 3) continue; // фон-скан под распознанным текстом
+        if (imgs.some((m) => Math.abs(m.x - bx) < 2 && Math.abs(m.y - by) < 2)) continue;
+        imgs.push({ x: bx, y: by, w: bw, h: bh });
+      }
+    }
+  }
+  if (imgs.length) {
+    const scale = 2;
+    const c = await renderPdfPage(page, vp.width * scale);
+    const k = c.width / vp.width;
+    for (const m of imgs) {
+      const o = document.createElement('canvas');
+      o.width = Math.max(1, Math.round(m.w * k)); o.height = Math.max(1, Math.round(m.h * k));
+      o.getContext('2d').drawImage(c, m.x * k, m.y * k, m.w * k, m.h * k, 0, 0, o.width, o.height);
+      const url = o.width * o.height > 400000 ? o.toDataURL('image/jpeg', 0.9) : o.toDataURL('image/png');
+      blocks.push({ y: m.y, html: `<p style="text-align:center"><img src="${url}" width="${Math.round(m.w)}" height="${Math.round(m.h)}"></p>` });
+    }
+    c.width = c.height = 0;
+  }
+  blocks.sort((p, q) => p.y - q.y);
+  return blocks.map((b) => b.html).join('\n');
 }
 
 function djvuPageText(page) {
@@ -1051,6 +1291,11 @@ async function pagesToHtml(file, ext, onProgress, onStatus) {
       c.width = c.height = 0;
     } else {
       onStatus(`Чтение: страница ${pg.index} из ${pg.total}…`);
+      // PDF с текстовым слоем: абзацы, заголовки и картинки по разметке страницы
+      if (pg.html) {
+        try { const h = await pg.html(); if (h.trim()) { pages.push(h); onProgress(pg.index / pg.total * 0.9); continue; } }
+        catch (e) { console.warn('Разметка страницы не удалась, беру просто текст:', e); }
+      }
     }
     if (pg.release) pg.release();
     pages.push(textToHtml(text));
@@ -2402,7 +2647,7 @@ async function convertDocument(item, opts, onProgress, onStatus) {
     if (!canBrowser) throw e;
     console.warn('Office не справился — конвертирую в браузере:', e);
     onStatus('Office не ответил — конвертирую в браузере…');
-    setProgress(item, null);
+    if (item.el) setProgress(item, null);
     const r = await browser();
     // DOCX браузер верстает почти как Word; у старых форматов оформление проще
     const warn = c === 'docx' ? 'ℹ Word не ответил — PDF собран в BullConvert' : '⚠ без Office: оформление упрощённое';
@@ -2684,6 +2929,27 @@ function setProgress(item, p) {
   else { progress.classList.remove('indet'); bar.style.width = Math.round(Math.min(1, p) * 100) + '%'; }
 }
 
+/** Любой поддерживаемый файл → нужный формат без строки в списке (для инструментов: «Всё в один PDF» и др.) */
+async function convertFileTo(file, target, onStatus = () => {}) {
+  const item = { file, path: '', depth: 0, status: 'idle' };
+  await identify(item);
+  if (!item.cat || item.cat === 'archive' || !item.targets.includes(target)) {
+    throw new Error(`«${file.name}»: этот файл нельзя перевести в ${target.toUpperCase()}.`);
+  }
+  item.target = target;
+  const opts = getOptions(), onProgress = () => {};
+  let res;
+  if (target === 'spdf') res = await searchablePdf(file, canon(item.ext), onProgress, onStatus);
+  else switch (item.cat) {
+    case 'image': res = await convertImage(file, canon(item.ext), target, opts, onProgress, onStatus); break;
+    case 'data': res = await convertData(file, item.ext, target); break;
+    case 'doc': res = await convertDocument(item, opts, onProgress, onStatus); break;
+    case 'media': res = await convertMedia(file, item.ext, target, opts, onProgress, onStatus); break;
+    case 'cad': res = await convertCad(item, onStatus); break;
+  }
+  return res instanceof Blob ? res : res.blob;
+}
+
 async function convertItem(item) {
   if (!item.cat || !item.target || item.status === 'work' || item.cat === 'archive') return;
   item.status = 'work';
@@ -2697,7 +2963,10 @@ async function convertItem(item) {
   const { file, ext, target } = item;
   try {
     let res;
-    switch (item.cat) {
+    if (target === 'spdf') {
+      const src = item.editedImage ? new File([item.editedImage], item.outBase + '.png', { type: 'image/png' }) : file;
+      res = await searchablePdf(src, item.editedImage ? 'png' : canon(ext), onProgress, onStatus);
+    } else switch (item.cat) {
       case 'image':
         // фото, отредактированное в конвертере (обрезка, поворот, размер, фон), хранится как PNG
         res = item.editedImage

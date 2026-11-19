@@ -73,6 +73,7 @@
       <div class="toolbar-actions">
         <select id="bulkTarget" class="bulk" title="Выбрать один формат для всех подходящих файлов"></select>
         <button id="clearAll" class="btn ghost">Очистить</button>
+        <button id="mergeAll" class="btn ghost" title="Собрать все файлы списка (фото, PDF, Word, Excel…) в один PDF">📄 Всё в один PDF</button>
         <button id="zipSrc" class="btn ghost" title="Упаковать исходные файлы списка в один ZIP">🗜 Упаковать в ZIP</button>
         <button id="zipAll" class="btn ghost" disabled>Скачать всё (ZIP)</button>
         <button id="convertAll" class="btn primary">Конвертировать все</button>
@@ -84,16 +85,16 @@
     <section class="formats">
       <h2>Что умеет</h2>
       <div class="formats-grid">
-        <div><h3>Инструменты PDF</h3><p><b>Объединить</b> и <b>разделить</b>, <b>удалить/повернуть/переставить</b> страницы, <b>сжать</b>, вставить <b>текст и подпись</b>, <b>номера страниц</b> и <b>водяной знак</b>, <b>пароль</b> (AES-256) — поставить и снять, <b>скрыть данные</b> с настоящим удалением из файла</p></div>
+        <div><h3>Инструменты PDF</h3><p><b>Всё в один PDF</b> — фото, Word, Excel, презентации и PDF вместе; <b>разделить</b>, <b>удалить/повернуть/переставить</b> страницы, <b>сжать</b>, вставить <b>текст и подпись</b>, <b>номера страниц</b> и <b>водяной знак</b>, <b>пароль</b> (AES-256) — поставить и снять, <b>скрыть данные</b> с настоящим удалением из файла</p></div>
         <div><h3>Старый Word и PowerPoint</h3><p>DOC → <b>PDF, DOCX, TXT, HTML, Markdown, EPUB, FB2</b>; PPT → <b>PDF, DOCX, TXT, HTML</b>; PPTX → слайды <b>PDF</b> и <b>JPG</b>. Без Microsoft Office<span class="only-pc">, а с Office на этом компьютере — точное оформление, ещё RTF, ODT и PPT → PPTX, JPG</span></p></div>
         <div class="only-pc"><h3>КОМПАС-3D и AutoCAD</h3><p>Чертежи CDW, FRW → <b>PDF, DWG, DXF, PNG, JPG</b>; спецификации SPW → <b>PDF</b>; модели M3D, A3D → <b>STEP, STL, IGES, PNG, PDF</b>; DWG, DXF → <b>PDF, CDW, PNG</b>. Нужен установленный КОМПАС-3D.</p></div>
         <div class="only-pc"><h3>Резервные копии .BAK</h3><p>Копии КОМПАС и AutoCAD: формат определяется по содержимому, дальше — как обычный чертёж или модель</p></div>
-        <div><h3>PDF и DjVu</h3><p>PDF → <b>DOCX, Excel (таблицы), TXT, EPUB, FB2, PNG, JPG</b>; DjVu → <b>PDF, PNG, JPG, DOCX, TXT</b>. Сканы распознаются (русский и английский)</p></div>
+        <div><h3>PDF и DjVu</h3><p>PDF → <b>DOCX, Excel (таблицы), TXT, EPUB, FB2, PNG, JPG</b>; DjVu → <b>PDF, PNG, JPG, DOCX, TXT</b>. Сканы распознаются (русский и английский); <b>PDF с поиском</b> — скан, в котором можно искать и копировать текст. В Word — с абзацами, заголовками и картинками</p></div>
         <div><h3>Электронные книги</h3><p>EPUB, FB2, MOBI, AZW, PRC → <b>PDF, DOCX, EPUB, FB2, TXT, HTML</b></p></div>
         <div><h3>Документы</h3><p>Word (DOCX), RTF, ODT, TXT, Markdown, HTML (любая кодировка, в т.ч. старая Windows-1251) → <b>PDF, DOCX, JPG, PNG, EPUB, FB2, HTML, Markdown, TXT</b>. Из DOCX в PDF — как в Word: поля, отступы, пустые строки, шрифты, таблицы с границами, формулы, надписи и номера страниц; презентации PowerPoint (PPTX) → <b>DOCX, TXT, HTML</b></p></div>
         <div><h3>Фото</h3><p>HEIC/HEIF с iPhone, TIFF (в т.ч. многостраничные сканы), PNG, JPG, WEBP, BMP, GIF, SVG, ICO, AVIF → <b>PNG, JPG, WEBP, PDF, GIF, TIFF, BMP, ICO</b></p></div>
-        <div><h3>Фоторедактор</h3><p><b>Обрезать, повернуть, отразить, изменить размер</b>, <b>сжать до нужного размера</b> («не больше 1 МБ»), <b>убрать фон</b> нейросетью, <b>склеить</b> несколько фото в одно</p></div>
-        <div><h3>Фото → текст</h3><p>Распознавание текста со снимка или скриншота (русский и английский) → <b>TXT, DOCX</b></p></div>
+        <div><h3>Фоторедактор</h3><p><b>Обрезать, повернуть, отразить, изменить размер</b>, <b>сжать до нужного размера</b> («не больше 1 МБ»), <b>убрать фон</b> нейросетью, <b>скан документа</b> — фото листа превращается в чистый чёрно-белый скан без теней, <b>склеить</b> несколько фото в одно</p></div>
+        <div><h3>Фото → текст</h3><p>Распознавание текста со снимка или скриншота (русский и английский) → <b>TXT, DOCX</b> и <b>PDF с поиском</b></p></div>
         <div><h3>Таблицы и данные</h3><p>XLSX, XLS, ODS, CSV, TSV, JSON, XML, YAML → <b>PDF, XLSX, DOCX, CSV, TSV, JSON, YAML, XML, HTML, Markdown</b>. Широкие таблицы — на альбомный лист, XML-структура — деревом</p></div>
         <div><h3>Аудио и видео</h3><p>MP3, WAV, OGG, M4A, FLAC, MP4, WEBM, MOV → <b>MP3, WAV</b>; видео → <b>MP4, WEBM</b> (в реальном времени), <b>GIF</b> и <b>кадры JPG</b>. <b>Обрезка</b> по времени</p></div>
         <div><h3>Удобство</h3><p><b>История</b> конвертаций на устройстве, <b>«Поделиться»</b> результатом с телефона, <b>упаковка в ZIP</b>, <b>английский</b> интерфейс (EN)</p></div>
@@ -112,7 +113,7 @@
     <form method="dialog" class="dlg-close"><button class="remove" aria-label="Закрыть">×</button></form>
     <h2>Инструменты</h2>
     <nav class="tabs">
-      <button class="tab active" data-tab="merge">Объединить PDF</button>
+      <button class="tab active" data-tab="merge">Всё в один PDF</button>
       <button class="tab" data-tab="pages">Страницы и разделение</button>
       <button class="tab" data-tab="compress">Сжать PDF</button>
       <button class="tab" data-tab="edit">Текст и подпись</button>
@@ -156,8 +157,10 @@
       <button class="btn sm" id="imgFlip" title="Отразить">⇋</button>
       <button class="btn sm" id="imgCropReset">Сбросить обрезку</button>
       <button class="btn sm" id="imgBg">✨ Убрать фон</button>
-      <label class="mini">Ширина, px <input type="number" id="imgW" min="16" placeholder="как есть"></label>
-      <label class="mini">Не больше, КБ <input type="number" id="imgKB" min="10" placeholder="без ограничения"></label>
+      <button class="btn sm" id="imgScan" title="Фото листа бумаги → чистый чёрно-белый скан: убираются тени и неровный свет">📄 Скан документа</button>
+      <button class="btn sm" id="imgLight" title="Убрать тени и выровнять освещение, сохранив цвета">☀ Выровнять свет</button>
+      <label class="mini">Ширина, px <input type="number" id="imgW" min="16" placeholder="авто"></label>
+      <label class="mini">Не больше, КБ <input type="number" id="imgKB" min="10" placeholder="любой"></label>
     </div>
     <p class="muted small">Чтобы обрезать — выделите нужную область мышью или пальцем.</p>
     <div class="img-wrap"><div class="img-stage" id="imgStage"><canvas id="imgCanvas"></canvas><div class="crop" id="imgCrop" hidden></div></div></div>
