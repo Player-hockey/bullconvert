@@ -175,11 +175,14 @@ function renderMerge() {
     <ol class="m-list" id="mergeList">${rows}</ol>
     <label class="chk"><input type="checkbox" id="mergeA4"> Картинки — на страницы A4 (иначе страница по размеру картинки)</label>
     <div class="tool-actions"><button class="btn primary" id="mergeGo" ${T.merge.length > 1 ? '' : 'disabled'}>Объединить и скачать</button>
+    <button class="btn ghost" id="mergeSort" ${T.merge.length > 1 ? '' : 'disabled'} title="Например, листы чертежей: Лист 1, Лист 2, … Лист 10">По имени ↓</button>
     <button class="btn ghost" id="mergeClear" ${T.merge.length ? '' : 'disabled'}>Очистить</button></div>
     <div class="tool-msg" id="toolMsg"></div>`;
   $('mergePick').onchange = (e) => { T.merge.push(...e.target.files); renderMerge(); };
   bindDrop($('mergeDrop'), (fs) => { T.merge.push(...fs); renderMerge(); });
   $('mergeClear').onclick = () => { T.merge = []; renderMerge(); };
+  // естественный порядок: «Лист 2» раньше «Лист 10»
+  $('mergeSort').onclick = () => { T.merge.sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true, sensitivity: 'base' })); renderMerge(); };
   body.querySelectorAll('.m-btns button').forEach((b) => b.onclick = () => {
     const i = +b.dataset.i, m = T.merge;
     if (b.dataset.a === 'del') m.splice(i, 1);

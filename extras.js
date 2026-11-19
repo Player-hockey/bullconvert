@@ -405,3 +405,96 @@ $('zipSrc').onclick = async () => {
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
   download({ blob, name: 'файлы.zip' });
 };
+
+/* ------------------------------ Шаблон имени ------------------------------ */
+
+(() => {
+  const el = $('nameTpl');
+  if (!el) return;
+  try { el.value = localStorage.getItem('bcNameTpl') || ''; } catch { /* приватный режим */ }
+  el.oninput = () => { try { localStorage.setItem('bcNameTpl', el.value.trim()); } catch { /* приватный режим */ } };
+})();
+
+/* ------------------------------ Перевод документов ------------------------------ */
+
+/**
+ * Перевод текста документа встроенным переводчиком браузера (Chrome на компьютере, без отправки текста в интернет).
+ * Русский ↔ английский; другие языки — на русский. Оформление (заголовки, таблицы, жирный) сохраняется.
+ * Результат хранится как «изменённый текст» — дальше его можно сохранить в любом формате.
+ */
+async function translateItem(item) {
+  const say = (t) => { item.el.meta.textContent = t; };
+  if (!('Translator' in self)) {
+    say('⚠ Этот браузер не умеет переводить сам. Нужен Google Chrome 138+ на компьютере (перевод идёт на устройстве, без интернета).');
+    return;
+  }
+  // уже переведено — вернуть оригинал
+  if (item.translated) {
+    item.editedHtml = item.htmlBeforeTranslate ?? null;
+    if (item.editedHtml == null) delete item.editedHtml;
+    delete item.translated; delete item.htmlBeforeTranslate;
+    item.status = 'idle'; item.result = null;
+    refreshRow(item); updateToolbar();
+    return;
+  }
+  item.status = 'work';
+  item.workText = 'Перевод: подготовка…';
+  refreshRow(item);
+  setProgress(item, null);
+  try {
+    const html = item.editedHtml ?? await docToHtml(item.file, item.ext, (p) => setProgress(item, p * 0.2), (s) => say(s));
+    const root = document.createElement('div');
+    root.innerHTML = html;
+    // язык: детектор браузера, иначе по доле кириллицы
+    const sample = root.textContent.slice(0, 2000);
+    let src = /[а-яё]/i.test(sample) && (sample.match(/[а-яё]/gi) || []).length > (sample.match(/[a-z]/gi) || []).length ? 'ru' : 'en';
+    // ожидание с пределом: встроенные модели браузера могут долго скачиваться
+    const limit = (pr, ms, msg) => Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
+    try {
+      // детектор языка — только если его модель уже есть (иначе хватает простой проверки по буквам)
+      if ('LanguageDetector' in self && await limit(LanguageDetector.availability(), 3000, 'timeout') === 'available') {
+        const det = await limit(LanguageDetector.create(), 5000, 'timeout');
+        const r = await limit(det.detect(sample), 5000, 'timeout');
+        if (r && r[0] && r[0].confidence > 0.5) src = r[0].detectedLanguage;
+      }
+    } catch { /* детектор недоступен — оставляем простую проверку */ }
+    const dst = src === 'ru' ? 'en' : 'ru';
+    const avail = await limit(Translator.availability({ sourceLanguage: src, targetLanguage: dst }), 10000, 'Переводчик браузера не отвечает — перевод работает в Google Chrome 138+ на компьютере.');
+    if (avail === 'unavailable') throw new Error(`Перевод ${src} → ${dst} недоступен в этом браузере.`);
+    if (avail !== 'available') say('Загрузка словаря для перевода (один раз)…');
+    // словарь скачивается один раз; если загрузка не пошла за 30 с — сообщаем, а не ждём бесконечно
+    let started = avail === 'available';
+    const tr = await limit(Translator.create({
+      sourceLanguage: src, targetLanguage: dst,
+      monitor(m) { m.addEventListener('downloadprogress', (e) => { started = true; say(`Загрузка словаря: ${Math.round(e.loaded * 100)}%`); setProgress(item, e.loaded * 0.2); }); },
+    }), 30000, 'Браузер не загрузил словарь для перевода. Нажмите «Перевести» ещё раз (нужен интернет один раз) или обновите Chrome.')
+      .catch(async (e) => { if (started) return Translator.create({ sourceLanguage: src, targetLanguage: dst }); throw e; });
+    // переводим по абзацам: у абзаца без внутреннего оформления — целиком (так точнее), иначе по кускам текста
+    const blocks = [...root.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, td, th, caption, figcaption, blockquote, dt, dd')]
+      .filter((b) => !b.querySelector('p, li, h1, h2, h3, h4, h5, h6, td, th, table, ul, ol') && b.textContent.trim());
+    let done = 0;
+    for (const b of blocks) {
+      const formatted = b.querySelector('b, strong, i, em, u, sup, sub, a, span, img, br, math');
+      if (!formatted) b.textContent = await tr.translate(b.textContent);
+      else {
+        const walker = document.createTreeWalker(b, NodeFilter.SHOW_TEXT);
+        const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+        for (const n of nodes) if (n.textContent.trim() && !n.parentElement.closest('math')) {
+          const lead = n.textContent.match(/^\s*/)[0], tail = n.textContent.match(/\s*$/)[0];
+          n.textContent = lead + await tr.translate(n.textContent.trim()) + tail;
+        }
+      }
+      done++;
+      if (done % 3 === 0) { say(`Перевод: ${done} из ${blocks.length}…`); setProgress(item, 0.2 + 0.8 * done / blocks.length); }
+    }
+    tr.destroy && tr.destroy();
+    item.htmlBeforeTranslate = item.editedHtml ?? null;
+    item.editedHtml = root.innerHTML;
+    item.translated = `${src}→${dst}`;
+    item.status = 'idle'; item.result = null;
+  } catch (e) {
+    item.status = 'error';
+    item.error = 'Перевод: ' + (e && e.message ? e.message : e);
+  }
+  refreshRow(item); updateToolbar();
+}

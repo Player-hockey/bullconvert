@@ -103,7 +103,7 @@ function targetsFor(cat, ext) {
       if (CAD_2D.includes(ext)) return ['pdf', 'dwg', 'dxf', 'png', 'jpg'];
       if (CAD_SPEC.includes(ext)) return ['pdf'];
       if (ext === 'dwg') return ['pdf', 'dxf', 'cdw', 'png', 'jpg'];
-      if (ext === 'dxf') return ['pdf', 'dwg', 'cdw', 'png', 'jpg'];
+      if (ext === 'dxf') return pcFeatures ? ['pdf', 'dwg', 'cdw', 'png', 'jpg', 'svg'] : ['pdf', 'svg', 'png', 'jpg'];
       if (CAD_3D.includes(ext)) return ['step', 'stl', 'igs', 'png', 'jpg', 'pdf'];
       return [];
     default: return [];
@@ -129,7 +129,7 @@ const MIME = {
   pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   epub: 'application/epub+zip', fb2: 'application/x-fictionbook+xml', zip: 'application/zip',
   mp3: 'audio/mpeg', wav: 'audio/wav', webm: 'video/webm',
-  dwg: 'image/vnd.dwg', dxf: 'image/vnd.dxf', cdw: 'application/octet-stream',
+  dwg: 'image/vnd.dwg', dxf: 'image/vnd.dxf', cdw: 'application/octet-stream', svg: 'image/svg+xml',
   step: 'model/step', stl: 'model/stl', igs: 'model/iges',
 };
 
@@ -142,7 +142,8 @@ let pcFeatures = false;
 let officeAvailable = false; // на компьютере владельца установлен Microsoft Office
 const catOf = (ext) => {
   const c = Object.keys(CATEGORIES).find((k) => CATEGORIES[k].in.includes(ext)) || null;
-  if (!pcFeatures && (c === 'cad' || (c === 'archive' && ext !== 'zip'))) return null;
+  // DXF рисуется прямо в браузере — доступен везде; остальные чертежи — только с КОМПАС на компьютере владельца
+  if (!pcFeatures && ((c === 'cad' && ext !== 'dxf') || (c === 'archive' && ext !== 'zip'))) return null;
   return c;
 };
 
@@ -3144,6 +3145,20 @@ async function convertOffice(item, onStatus) {
   return new Blob([data], { type: MIME[target] || types[target] || 'application/octet-stream' });
 }
 
+/** Чертёж: DXF — в браузере (везде) или через КОМПАС (на компьютере владельца, с запасным путём) */
+async function convertDrawing(item, opts, onStatus) {
+  const { file, ext, target } = item;
+  const inBrowser = ext === 'dxf' && typeof dxfConvert === 'function' && ['pdf', 'svg', 'png', 'jpg'].includes(target);
+  if (inBrowser && (!pcFeatures || target === 'svg')) return dxfConvert(file, target, opts, onStatus);
+  try { return await convertCad(item, onStatus); }
+  catch (e) {
+    if (!inBrowser) throw e;
+    console.warn('КОМПАС не справился, рисую DXF в браузере:', e);
+    const blob = await dxfConvert(file, target, opts, onStatus);
+    return { blob, ext: target, warn: '⚠ без КОМПАС: нарисовано в браузере' };
+  }
+}
+
 async function convertCad(item, onStatus) {
   const { file, ext, target } = item;
   // детали часто лежат в подпапках (STANDART PARTS\, OTHER\…) или уровнем выше —
@@ -3247,7 +3262,28 @@ async function identify(item) {
   item.ext = ext;
   item.cat = catOf(ext);
   item.targets = item.cat ? targetsFor(item.cat, ext) : [];
-  item.target = item.targets[0] || null;
+  // формат, выбранный в прошлый раз для такого типа файла
+  const remembered = rememberedTarget(ext);
+  item.target = (remembered && item.targets.includes(remembered) ? remembered : item.targets[0]) || null;
+}
+
+/* ---- запоминание форматов и шаблон имени ---- */
+function rememberedTarget(ext) {
+  try { return (JSON.parse(localStorage.getItem('bcTargets') || '{}'))[canon(ext)] || null; } catch { return null; }
+}
+function rememberTarget(ext, t) {
+  try { const m = JSON.parse(localStorage.getItem('bcTargets') || '{}'); m[canon(ext)] = t; localStorage.setItem('bcTargets', JSON.stringify(m)); } catch { /* приватный режим */ }
+}
+/** Имя результата по шаблону: {имя}, {дата}, {номер}, {формат} */
+function outputName(item, ext) {
+  let tpl = '{имя}';
+  try { tpl = localStorage.getItem('bcNameTpl') || '{имя}'; } catch { /* приватный режим */ }
+  const d = new Date();
+  const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const n = String(Math.max(1, items.indexOf(item) + 1)).padStart(String(items.length).length, '0');
+  const name = tpl.replace(/\{имя\}|\{name\}/gi, item.outBase).replace(/\{дата\}|\{date\}/gi, date).replace(/\{номер\}|\{n\}/gi, n).replace(/\{формат\}|\{ext\}/gi, ext.toUpperCase())
+    .replace(/[\\/:*?"<>|]+/g, '_').trim();
+  return name || item.outBase;
 }
 
 async function unpack(item) {
@@ -3298,6 +3334,7 @@ function buildRow(item) {
     if (!b || item.status === 'work') return;
     const l = b.dataset.l;
     if (l === 'doc') openDocEditor(item);
+    else if (l === 'translate') translateItem(item);
     else if (l === 'img') openImageEditor(item);
     else if (l === 'media') openTrim(item);
     else if (l === 'share') shareResult(item.result);
@@ -3311,7 +3348,7 @@ function buildRow(item) {
 
   const target = document.createElement('select');
   target.className = 'target';
-  target.onchange = () => { item.target = target.value; item.status = 'idle'; item.result = null; refreshRow(item); updateToolbar(); };
+  target.onchange = () => { item.target = target.value; rememberTarget(item.ext, item.target); item.status = 'idle'; item.result = null; refreshRow(item); updateToolbar(); };
 
   const action = document.createElement('button');
   action.className = 'btn action';
@@ -3360,7 +3397,7 @@ function refreshRow(item) {
 
   // быстрые действия: редактирование документа и инструменты PDF
   const L = [];
-  if (item.cat === 'doc' && item.ext) L.push(['doc', '✏ Редактировать текст']);
+  if (item.cat === 'doc' && item.ext) L.push(['doc', '✏ Редактировать текст'], ['translate', item.translated ? `🌐 Переведено (${item.translated})` : '🌐 Перевести']);
   if (item.ext === 'pdf') L.push(['pages', '🛠 Страницы'], ['compress', '🗜 Сжать'], ['edit', '✍ Текст/подпись'], ['stamp', '# Номера/знак'], ['protect', '🔒 Пароль'], ['redact', '⬛ Скрыть данные']);
   if (item.cat === 'image' && item.ext) L.push(['img', item.editedImage ? '✂ Изменить фото (изменено)' : '✂ Обрезать, повернуть, сжать']);
   if (item.cat === 'media' && item.ext) L.push(['media', item.trim ? `✂ Обрезка ${fmtTime(item.trim.start)}–${item.trim.end ? fmtTime(item.trim.end) : 'конец'}` : '✂ Обрезать']);
@@ -3425,7 +3462,7 @@ async function convertFileTo(file, target, onStatus = () => {}) {
     case 'data': res = await convertData(file, item.ext, target); break;
     case 'doc': res = await convertDocument(item, opts, onProgress, onStatus); break;
     case 'media': res = await convertMedia(file, item.ext, target, opts, onProgress, onStatus); break;
-    case 'cad': res = await convertCad(item, onStatus); break;
+    case 'cad': res = await convertDrawing(item, opts, onStatus); break;
   }
   return res instanceof Blob ? res : res.blob;
 }
@@ -3459,11 +3496,11 @@ async function convertItem(item) {
       case 'data':  res = await convertData(file, ext, target); break;
       case 'doc': res = await convertDocument(item, opts, onProgress, onStatus); break;
       case 'media': res = await convertMedia(file, ext, target, opts, onProgress, onStatus); break;
-      case 'cad':   res = await convertCad(item, onStatus); break;
+      case 'cad':   res = await convertDrawing(item, opts, onStatus); break;
     }
     const blob = res instanceof Blob ? res : res.blob;
     const outExt = res instanceof Blob ? target : res.ext;
-    item.result = { blob, name: `${item.outBase}${res.suffix || ''}.${outExt}`, path: item.path, note: res.note, warn: res.warn };
+    item.result = { blob, name: `${outputName(item, outExt)}${res.suffix || ''}.${outExt}`, path: item.path, note: res.note, warn: res.warn };
     item.status = 'done';
     if (typeof addHistory === 'function') addHistory(item.result).catch(() => {});
   } catch (e) {
@@ -3503,7 +3540,7 @@ function updateBulk() {
   const prev = sel.value;
   sel.innerHTML = '';
   sel.add(new Option('Формат для всех…', ''));
-  for (const t of Object.keys(counts).sort((a, b) => counts[b] - counts[a])) sel.add(new Option(`${t.toUpperCase()} (${counts[t]})`, t));
+  for (const t of Object.keys(counts).sort((a, b) => counts[b] - counts[a])) sel.add(new Option(`${targetLabel(t)} (${counts[t]})`, t));
   sel.value = counts[prev] ? prev : '';
   sel.hidden = Object.keys(counts).length === 0;
 }
@@ -3514,6 +3551,7 @@ $('bulkTarget').onchange = (e) => {
   for (const i of items) {
     if (i.status === 'work' || !i.targets || !i.targets.includes(t) || i.target === t) continue;
     i.target = t; i.el.target.value = t; i.status = 'idle'; i.result = null;
+    rememberTarget(i.ext, t);
     refreshRow(i);
   }
   updateToolbar();
