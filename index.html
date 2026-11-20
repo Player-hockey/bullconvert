@@ -111,10 +111,18 @@
     </section>
   </main>
 
-  <div class="privacy-bar" id="privacyBar" hidden>
-    <span>🔒 Файлы конвертируются на вашем устройстве и никуда не загружаются. <a href="privacy.html">Политика конфиденциальности</a></span>
-    <button class="btn sm" id="privacyOk">Понятно</button>
-  </div>
+  <dialog id="consentDlg" class="dlg consent-dlg">
+    <h2>Политика конфиденциальности</h2>
+    <p>BullConvert обрабатывает файлы на вашем устройстве — они никуда не загружаются. Для использования приложения необходимо принять
+      <a href="privacy.html" target="_blank" rel="noopener">Политику конфиденциальности</a> и дать
+      <a href="privacy.html#consent" target="_blank" rel="noopener">согласие на обработку персональных данных</a>.</p>
+    <label class="chk consent-chk"><input type="checkbox" id="consentChk"><span>Я ознакомлен(а) с Политикой конфиденциальности и даю согласие на обработку персональных данных</span></label>
+    <div class="tool-actions">
+      <button class="btn ghost" id="consentNo">Отказаться</button>
+      <button class="btn primary" id="consentYes" disabled>Принять</button>
+    </div>
+    <p class="muted small" id="consentMsg"></p>
+  </dialog>
 
   <dialog id="devicesDlg" class="dlg">
     <form method="dialog" class="dlg-close"><button class="remove" aria-label="Закрыть">×</button></form>

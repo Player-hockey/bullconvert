@@ -499,13 +499,27 @@ async function translateItem(item) {
   refreshRow(item); updateToolbar();
 }
 
-/* ------------------------------ Уведомление о конфиденциальности ------------------------------ */
+/* ------------------------------ Согласие с Политикой конфиденциальности ------------------------------ */
 
+// редакция Политики: при её изменении согласие запрашивается заново
+const CONSENT_VERSION = '2026-11-20';
+function hasConsent() {
+  try { const c = JSON.parse(localStorage.getItem('bcConsent') || 'null'); return !!c && c.v === CONSENT_VERSION; } catch { return false; }
+}
 (() => {
-  const bar = $('privacyBar');
-  if (!bar) return;
-  let seen = false;
-  try { seen = !!localStorage.getItem('bcPrivacyOk'); } catch { /* приватный режим — показываем */ }
-  bar.hidden = seen;
-  $('privacyOk').onclick = () => { bar.hidden = true; try { localStorage.setItem('bcPrivacyOk', '1'); } catch { /* приватный режим */ } };
+  const dlg = $('consentDlg');
+  if (!dlg || hasConsent()) return;
+  const chk = $('consentChk'), yes = $('consentYes');
+  chk.onchange = () => { yes.disabled = !chk.checked; };
+  // без согласия окно не закрывается (в том числе клавишей Esc)
+  dlg.addEventListener('cancel', (e) => e.preventDefault());
+  dlg.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.preventDefault(); });
+  // браузер всё же закрыл окно (Esc, жест «назад») — открываем снова, пока нет согласия
+  dlg.addEventListener('close', () => { if (!hasConsent()) setTimeout(() => { if (!dlg.open) dlg.showModal(); }, 0); });
+  yes.onclick = () => {
+    try { localStorage.setItem('bcConsent', JSON.stringify({ v: CONSENT_VERSION, at: new Date().toISOString() })); } catch { /* приватный режим: согласие действует до закрытия вкладки */ }
+    dlg.close();
+  };
+  $('consentNo').onclick = () => { $('consentMsg').textContent = 'Без согласия использование BullConvert невозможно. Вы можете закрыть страницу.'; };
+  dlg.showModal();
 })();
