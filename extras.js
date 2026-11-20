@@ -9,17 +9,18 @@
 
 /* -------------------------- Удаление фона с фото -------------------------- */
 
-const BG_LIB = 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.8/+esm';
+const BG_LIB = 'vendor/npm/@imgly/background-removal@1.5.8/_esm.mjs';
 let bgModule = null;
 
 async function removeBackground(blob, onStatus = () => {}, onProgress = () => {}) {
   if (!bgModule) {
     onStatus('Загрузка нейросети для удаления фона (один раз, ≈40 МБ)…');
-    try { bgModule = await import(BG_LIB); }
-    catch { throw new Error('Не удалось загрузить модуль удаления фона. Проверьте интернет.'); }
+    try { bgModule = await import(new URL(BG_LIB, location.href).href); }
+    catch { throw new Error('Не удалось загрузить модуль удаления фона. Обновите страницу.'); }
   }
   return bgModule.removeBackground(blob, {
     model: 'isnet_quint8',
+    publicPath: new URL('vendor/imgly/', location.href).href,
     output: { format: 'image/png' },
     progress: (key, cur, total) => {
       if (key.startsWith('fetch')) { onStatus(`Загрузка нейросети: ${Math.round(cur / total * 100)}%`); onProgress(cur / total * 0.7); }
@@ -325,7 +326,13 @@ async function shareResult(result) {
 
 /* ---------------------------- История конвертаций ---------------------------- */
 
-const HIST_LIMIT = 50, HIST_MAX_BYTES = 300 * 1024 * 1024, HIST_MAX_FILE = 100 * 1024 * 1024;
+const HIST_LIMIT = 100;
+/** Объём истории подстраивается под свободное место браузера: до четверти квоты, но не больше 2 ГБ */
+async function histLimits() {
+  let bytes = 300 * 1048576;
+  try { const q = (await navigator.storage.estimate()).quota; if (q) bytes = Math.max(bytes, Math.min(2048 * 1048576, q / 4)); } catch { /* нет оценки */ }
+  return { total: bytes, file: bytes / 2 };
+}
 
 function histDb() {
   return new Promise((resolve, reject) => {
@@ -352,13 +359,15 @@ async function histAll() {
 }
 
 async function addHistory(result) {
-  if (!window.indexedDB || !result || result.blob.size > HIST_MAX_FILE) return;
+  if (!window.indexedDB || !result) return;
+  const lim = await histLimits();
+  if (result.blob.size > lim.file) return;
   await histTx('readwrite', (s) => s.add({ name: result.name, size: result.blob.size, type: result.blob.type, date: Date.now(), blob: result.blob }));
   // старые записи — прочь, если превышен лимит по числу или объёму
   const all = await histAll();
   let total = 0;
   const drop = [];
-  all.forEach((h, i) => { total += h.size; if (i >= HIST_LIMIT || total > HIST_MAX_BYTES) drop.push(h.id); });
+  all.forEach((h, i) => { total += h.size; if (i >= HIST_LIMIT || total > lim.total) drop.push(h.id); });
   if (drop.length) await histTx('readwrite', (s) => drop.forEach((id) => s.delete(id)));
 }
 
@@ -508,7 +517,7 @@ function hasConsent() {
 }
 (() => {
   const dlg = $('consentDlg');
-  if (!dlg || hasConsent()) return;
+  if (!dlg || hasConsent() || TEST_MODE) return;
   const chk = $('consentChk'), yes = $('consentYes');
   chk.onchange = () => { yes.disabled = !chk.checked; };
   // без согласия окно не закрывается (в том числе клавишей Esc)
@@ -538,12 +547,12 @@ const STATS = {
   started: false,
 };
 function statsStart() {
-  if (STATS.started || !hasConsent()) return;
+  if (STATS.started || !hasConsent() || TEST_MODE) return;
   STATS.started = true;
   if (STATS.gc) {
     const s = document.createElement('script');
     s.async = true;
-    s.src = 'https://gc.zgo.at/count.js';
+    s.src = 'vendor/goatcounter/count.js';
     s.dataset.goatcounter = `https://${SITE_CONFIG.goatcounter}.goatcounter.com/count`;
     document.head.appendChild(s);
   }

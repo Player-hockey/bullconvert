@@ -480,7 +480,7 @@ function pptToHtml(cfb, onStatus) {
     for (const url of [...new Set(sl.pics)]) body.push(`<p><img src="${url}"></p>`);
     return `<h2>Слайд ${k + 1}${title ? '. ' + escapeHtml(title) : ''}</h2>\n${body.join('\n')}`;
   });
-  return parts.join('\n<hr>\n');
+  return parts.join('\n<hr class="page">\n'); // каждый слайд — с новой страницы
 }
 
 /** DOC/DOT/PPT/PPS → HTML. Учитываем «переименованные» файлы: RTF, HTML или DOCX с расширением .doc */
@@ -994,6 +994,12 @@ async function renderPptx(file, width, onSlide, onStatus) {
         if (/^\s+$/.test(it.text)) continue;
         g.font = it.r.font; g.fillStyle = css(it.r.color);
         g.fillText(it.text, x0 + it.x, base);
+        // запоминаем, где стоит текст: для невидимого текстового слоя в PDF (поиск и копирование)
+        if (g.canvas.textItems) {
+          const m = g.getTransform(), p = m.transformPoint(new DOMPoint(x0 + it.x, base));
+          const sc = Math.hypot(m.a, m.b) || 1;
+          g.canvas.textItems.push({ t: it.text, x: p.x, y: p.y, size: it.r.size * sc, w: g.measureText(it.text).width * sc, rot: Math.atan2(m.b, m.a) });
+        }
         if (it.r.u) { const w = g.measureText(it.text).width; g.fillRect(x0 + it.x, base + it.r.size * 0.1, w, Math.max(1, it.r.size / 16)); }
       }
     }
@@ -1242,6 +1248,7 @@ async function renderPptx(file, width, onSlide, onStatus) {
     const C = { theme, map };
     const canvas = document.createElement('canvas');
     canvas.width = W; canvas.height = H;
+    canvas.textItems = [];
     const g = canvas.getContext('2d');
     await drawBg(g, [slide, layout, master].filter((x) => x && x.doc), C);
     const ctx = { C, T: { ox: 0, oy: 0, sx: S, sy: S }, isSlide: false, layoutPhs: phList(layout), masterPhs: phList(master), master };
@@ -1257,19 +1264,42 @@ async function renderPptx(file, width, onSlide, onStatus) {
 
 /** PPTX → PDF (по странице на слайд) или JPG (один слайд — картинка, несколько — ZIP) без PowerPoint */
 async function slidesConvert(file, target, opts, onProgress, onStatus) {
-  const pdf = target === 'pdf' ? await createImagePdf() : null;
+  // PDF: слайд — картинка, поверх неё невидимый текст на тех же местах (его можно искать и копировать)
+  let pdf = null, font = null;
+  if (target === 'pdf') {
+    await loadLib('pdflib');
+    pdf = await PDFLib.PDFDocument.create();
+    try { font = await embedCyrFont(pdf); } catch (e) { console.warn('Текстовый слой слайдов без шрифта:', e); }
+  }
   const jpgs = [];
   const q = Math.min(0.95, Math.max(0.6, opts.quality || 0.9));
   const info = await renderPptx(file, 1920, async (canvas, i, n, wPt) => {
     onProgress((i + 1) / n);
-    if (pdf) pdf.add(canvas, q, wPt);
-    else jpgs.push(await canvasToBlob(canvas, 'image/jpeg', q));
+    if (pdf) {
+      const k = wPt / canvas.width, hPt = canvas.height * k;
+      const page = pdf.addPage([wPt, hPt]);
+      const jpg = await pdf.embedJpg(await (await canvasToBlob(canvas, 'image/jpeg', q)).arrayBuffer());
+      page.drawImage(jpg, { x: 0, y: 0, width: wPt, height: hPt });
+      for (const it of (font && canvas.textItems) || []) {
+        let size = it.size * k;
+        try { const w1 = font.widthOfTextAtSize(it.t, 1); if (w1 > 0 && it.w > 0) size = it.w * k / w1; } catch { continue; }
+        if (!(size > 0.5)) continue;
+        try {
+          page.drawText(it.t, { x: it.x * k, y: hPt - it.y * k, size, font, opacity: 0,
+            rotate: PDFLib.degrees(-it.rot * 180 / Math.PI) });
+        } catch { /* символа нет в шрифте */ }
+      }
+    } else jpgs.push(await canvasToBlob(canvas, 'image/jpeg', q));
+    canvas.width = canvas.height = 0; // освобождаем память холста
   }, onStatus);
   const miss = [];
   if (info.skipped.charts) miss.push(`диаграмм: ${info.skipped.charts}`);
   if (info.skipped.images) miss.push(`картинок: ${info.skipped.images}`);
   const warn = miss.length ? `⚠ не нарисовано ${miss.join(', ')}` : undefined;
-  if (pdf) return { blob: pdf.blob(), ext: 'pdf', warn };
+  if (pdf) {
+    if (!pdf.getPageCount()) throw new Error('В презентации нет слайдов.');
+    return { blob: new Blob([await pdf.save()], { type: 'application/pdf' }), ext: 'pdf', warn };
+  }
   if (jpgs.length === 1) return { blob: jpgs[0], ext: 'jpg', warn };
   await loadLib('jszip');
   const zip = new JSZip();

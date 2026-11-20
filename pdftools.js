@@ -17,7 +17,7 @@ async function openPdfJs(bytes) {
   const pdfjs = await getPdfJs();
   try {
     // pdf.js забирает буфер себе — отдаём копию, оригинал нужен pdf-lib
-    return await pdfjs.getDocument({ data: bytes.slice() }).promise;
+    return await pdfjs.getDocument({ data: bytes.slice(), ...PDFJS_OPTS() }).promise;
   } catch (e) {
     if (e && e.name === 'PasswordException') throw new Error('PDF защищён паролем — сначала снимите защиту.');
     throw new Error('Не удалось открыть PDF (файл повреждён?).');

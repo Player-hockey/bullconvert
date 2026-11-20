@@ -281,7 +281,7 @@ async function xlsxToPdf(file, onStatus) {
   };
   onStatus && onStatus('Создание PDF…');
   const blob = await new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('Вёрстка PDF заняла слишком много времени.')), 90000);
+    const t = setTimeout(() => reject(new Error('Вёрстка PDF заняла слишком много времени.')), Math.max(90000, layoutTimeout(file.size * 4)));
     try { pdfMake.createPdf(dd).getBlob((b) => { clearTimeout(t); resolve(b); }); } catch (e) { clearTimeout(t); reject(e); }
   });
   return { blob, skipped };

@@ -1,8 +1,9 @@
-﻿// BullConvert service worker: РїСЂРёР»РѕР¶РµРЅРёРµ РѕС‚РєСЂС‹РІР°РµС‚СЃСЏ Р±РµР· СЃРµС‚Рё,
-// Р° Р±РёР±Р»РёРѕС‚РµРєРё СЃ CDN РїРѕСЃР»Рµ РїРµСЂРІРѕРіРѕ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ Р±РµСЂСѓС‚СЃСЏ РёР· РєСЌС€Р°.
-const VERSION = 'bc-v21';
+// BullConvert service worker: приложение открывается без сети,
+// а библиотеки из vendor/ после первого использования берутся из кэша.
+const VERSION = 'bc-v22';
 const SHELL = `${VERSION}-shell`;
-const LIBS = `${VERSION}-libs`;
+// Библиотеки в vendor/ лежат по путям с номером версии — их кэш не сбрасывается при обновлении
+const LIBS = 'bc-vendor-1';
 const SHELL_FILES = [
   './', 'index.html', 'app.js', 'style.css', 'manifest.webmanifest',
   'bullconvert.svg', 'bullconvert.ico', 'icon-192.png', 'icon-512.png', 'pdftools.js', 'extras.js', 'i18n.js', 'office.js', 'docx.js', 'math.js', 'sign.js', 'xlsx.js', 'scan.js', 'dxf.js', 'privacy.html', 'site-config.js',
@@ -14,7 +15,7 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (!k.startsWith(VERSION)) await caches.delete(k);
+    for (const k of await caches.keys()) if (!k.startsWith(VERSION) && k !== LIBS) await caches.delete(k);
     await self.clients.claim();
   })());
 });
@@ -24,10 +25,22 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // API СЃРµСЂРІРµСЂР° (РљРћРњРџРђРЎ, Р°СЂС…РёРІС‹) вЂ” С‚РѕР»СЊРєРѕ РїРѕ СЃРµС‚Рё
+  // API сервера (КОМПАС, архивы) — только по сети
   if (url.origin === location.origin && url.pathname.startsWith('/api/')) return;
 
-  // РЎРІРѕРё С„Р°Р№Р»С‹: СЃРЅР°С‡Р°Р»Р° СЃРµС‚СЊ (С‡С‚РѕР±С‹ РѕР±РЅРѕРІР»РµРЅРёСЏ РїСЂРёС…РѕРґРёР»Рё СЃСЂР°Р·Сѓ), Р±РµР· СЃРµС‚Рё вЂ” РєСЌС€
+  // Библиотеки, шрифты и модели (vendor/): версии зафиксированы в путях — сначала кэш
+  if (url.origin === location.origin && url.pathname.includes('/vendor/')) {
+    e.respondWith((async () => {
+      const cached = await caches.match(req, { cacheName: LIBS });
+      if (cached) return cached;
+      const res = await fetch(req);
+      if (res.ok && res.status === 200) (await caches.open(LIBS)).put(req, res.clone());
+      return res;
+    })());
+    return;
+  }
+
+  // Свои файлы: сначала сеть (чтобы обновления приходили сразу), без сети — кэш
   if (url.origin === location.origin) {
     e.respondWith((async () => {
       try {
@@ -39,17 +52,5 @@ self.addEventListener('fetch', (e) => {
       }
     })());
     return;
-  }
-
-  // Р‘РёР±Р»РёРѕС‚РµРєРё СЃ CDN: РІРµСЂСЃРёРё Р·Р°С„РёРєСЃРёСЂРѕРІР°РЅС‹ вЂ” РєСЌС€, РёРЅР°С‡Рµ СЃРµС‚СЊ
-  // staticimgly.com вЂ” РјРѕРґРµР»СЊ РЅРµР№СЂРѕСЃРµС‚Рё РґР»СЏ СѓРґР°Р»РµРЅРёСЏ С„РѕРЅР°
-  if (/(^|\.)(jsdelivr\.net|djvu\.js\.org|staticimgly\.com)$/.test(url.hostname)) {
-    e.respondWith((async () => {
-      const cached = await caches.match(req);
-      if (cached) return cached;
-      const res = await fetch(req);
-      if (res.ok || res.type === 'opaque') (await caches.open(LIBS)).put(req, res.clone());
-      return res;
-    })());
   }
 });

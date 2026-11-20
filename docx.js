@@ -16,7 +16,7 @@ const DOCX_FONTS = {
 const DOCX_FONT_STYLES = { normal: '400Regular', bold: '700Bold', italics: '400Regular_Italic', bolditalics: '700Bold_Italic' };
 const docxFontUrl = (fam, style) => {
   const f = DOCX_FONTS[fam], s = DOCX_FONT_STYLES[style];
-  return `https://cdn.jsdelivr.net/npm/@expo-google-fonts/${f.pkg}/${s}/${f.base}_${s}.ttf`;
+  return `vendor/npm/@expo-google-fonts/${f.pkg}/${s}/${f.base}_${s}.ttf`;
 };
 
 /** Название шрифта Word → шрифт PDF с такими же размерами букв */
@@ -871,7 +871,7 @@ async function docxToPdf(file, onStatus) {
   };
   docxToPdf.lastDoc = dd; // для диагностики
   const make = (def) => new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Вёрстка PDF заняла слишком много времени.')), 60000);
+    const timer = setTimeout(() => reject(new Error('Вёрстка PDF заняла слишком много времени.')), layoutTimeout(file.size));
     try { pdfMake.createPdf(def).getBuffer((b) => { clearTimeout(timer); resolve(b); }); } catch (e) { clearTimeout(timer); reject(e); }
   });
 

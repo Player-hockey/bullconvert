@@ -4,38 +4,46 @@
    BullConvert — конвертер файлов.
    Почти всё работает прямо в браузере; часть форматов
    обрабатывает локальный сервер (serve.ps1).
-   Библиотеки подгружаются с CDN только когда нужны.
+   Библиотеки лежат в папке vendor/ (свои копии, без чужих серверов)
+   и подгружаются только когда нужны.
    ===================================================================== */
 
+// Все библиотеки — свои копии в vendor/ (скачивает tools/vendor.py)
 const CDN = {
-  xlsx:        'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
-  yaml:        'https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js',
-  marked:      'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js',
-  turndown:    'https://cdn.jsdelivr.net/npm/turndown@7.1.3/dist/turndown.js',
-  mammoth:     'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js',
-  pdfjs:       'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js',
-  pdfjsWorker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js',
-  html2pdf:    'https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js',
-  pdfmake:     'https://cdn.jsdelivr.net/npm/pdfmake@0.2.10/build/pdfmake.min.js',
-  pdfmakeFonts:'https://cdn.jsdelivr.net/npm/pdfmake@0.2.10/build/vfs_fonts.js',
-  htmlToPdfmake:'https://cdn.jsdelivr.net/npm/html-to-pdfmake@2.5.13/browser.js',
-  jspdf:       'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js',
-  jszip:       'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
-  lame:        'https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js',
-  tesseract:   'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
-  heic2any:    'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js',
-  djvu:        'https://djvu.js.org/assets/dist/djvu.js',
-  qrcode:      'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js',
+  xlsx:        'vendor/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+  yaml:        'vendor/npm/js-yaml@4.1.0/dist/js-yaml.min.js',
+  marked:      'vendor/npm/marked@12.0.2/marked.min.js',
+  turndown:    'vendor/npm/turndown@7.1.3/dist/turndown.js',
+  mammoth:     'vendor/npm/mammoth@1.8.0/mammoth.browser.min.js',
+  pdfjs:       'vendor/npm/pdfjs-dist@3.11.174/build/pdf.min.js',
+  pdfjsWorker: 'vendor/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js',
+  html2pdf:    'vendor/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js',
+  pdfmake:     'vendor/npm/pdfmake@0.2.10/build/pdfmake.min.js',
+  pdfmakeFonts:'vendor/npm/pdfmake@0.2.10/build/vfs_fonts.js',
+  htmlToPdfmake:'vendor/npm/html-to-pdfmake@2.5.13/browser.js',
+  jspdf:       'vendor/npm/jspdf@2.5.1/dist/jspdf.umd.min.js',
+  jszip:       'vendor/npm/jszip@3.10.1/dist/jszip.min.js',
+  lame:        'vendor/npm/lamejs@1.2.1/lame.min.js',
+  tesseract:   'vendor/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
+  heic2any:    'vendor/npm/heic2any@0.0.4/dist/heic2any.min.js',
+  djvu:        'vendor/djvu/djvu.js',
+  qrcode:      'vendor/npm/qrcode-generator@1.4.4/qrcode.js',
   // @cantoo/pdf-lib — совместимая версия pdf-lib с поддержкой паролей (AES-256)
-  pdflib:      'https://cdn.jsdelivr.net/npm/@cantoo/pdf-lib@2.9.2/dist/pdf-lib.min.js',
-  fontkit:     'https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js',
-  pako:        'https://cdn.jsdelivr.net/npm/pako@1.0.11/dist/pako.min.js',
-  utif:        'https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js',
-  omggif:      'https://cdn.jsdelivr.net/npm/omggif@1.0.10/omggif.js',
+  pdflib:      'vendor/npm/@cantoo/pdf-lib@2.9.2/dist/pdf-lib.min.js',
+  fontkit:     'vendor/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js',
+  pako:        'vendor/npm/pako@1.0.11/dist/pako.min.js',
+  utif:        'vendor/npm/utif@3.1.0/UTIF.js',
+  omggif:      'vendor/npm/omggif@1.0.10/omggif.js',
   // векторные картинки Windows (WMF/EMF): формулы и схемы в документах Word
-  wmf:         'https://cdn.jsdelivr.net/npm/rtf.js@3.0.9/dist/WMFJS.bundle.min.js',
-  emf:         'https://cdn.jsdelivr.net/npm/rtf.js@3.0.9/dist/EMFJS.bundle.min.js',
+  wmf:         'vendor/npm/rtf.js@3.0.9/dist/WMFJS.bundle.min.js',
+  emf:         'vendor/npm/rtf.js@3.0.9/dist/EMFJS.bundle.min.js',
 };
+
+/** Полный адрес файла из vendor/ (нужен для воркеров и модулей) */
+const vendorUrl = (p) => new URL('vendor/' + p, location.href).href;
+// карты кодировок и стандартные шрифты для pdf.js: китайские/японские PDF и PDF без встроенных шрифтов
+const PDFJS_OPTS = () => ({ cMapUrl: vendorUrl('npm/pdfjs-dist@3.11.174/cmaps/'), cMapPacked: true,
+  standardFontDataUrl: vendorUrl('npm/pdfjs-dist@3.11.174/standard_fonts/') });
 
 const libPromises = {};
 function loadLib(name) {
@@ -47,7 +55,7 @@ function loadLib(name) {
       s.onerror = () => {
         delete libPromises[name];
         s.remove();
-        reject(new Error(`Не удалось загрузить библиотеку «${name}». Проверьте подключение к интернету.`));
+        reject(new Error(`Не удалось загрузить библиотеку «${name}». Обновите страницу.`));
       };
       document.head.appendChild(s);
     });
@@ -140,6 +148,9 @@ const baseOf = (name) => (name.includes('.') ? name.slice(0, name.lastIndexOf('.
 // эти форматы считаются неподдерживаемыми и нигде не упоминаются.
 let pcFeatures = false;
 let officeAvailable = false; // на компьютере владельца установлен Microsoft Office
+// Режим автоматических проверок (tests/tests.html): только на этом компьютере; Office и статистика отключены,
+// чтобы проверялось то же, что работает у посетителей публичного сайта
+const TEST_MODE = ['localhost', '127.0.0.1', 'bullconvert.localhost'].includes(location.hostname) && new URLSearchParams(location.search).has('test');
 const catOf = (ext) => {
   const c = Object.keys(CATEGORIES).find((k) => CATEGORIES[k].in.includes(ext)) || null;
   // DXF рисуется прямо в браузере — доступен везде; остальные чертежи — только с КОМПАС на компьютере владельца
@@ -157,6 +168,14 @@ function formatSize(n) {
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const escapeXml = (s) => String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const tick = () => new Promise((r) => setTimeout(r, 0));
+/** Время на вёрстку PDF: растёт с объёмом (минута + 20 с на каждый МБ, до 30 минут),
+ *  чтобы большие документы успевали собраться, а зависание всё равно ловилось. */
+const layoutTimeout = (bytes) => Math.round(Math.min(30 * 60e3, 60e3 + (bytes / 1048576) * 20e3));
+// Предел размера холста: Safari/iPhone — 16,7 млн точек, остальные браузеры — больше
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const MAX_CANVAS_AREA = IS_IOS ? 16_000_000 : 120_000_000, MAX_CANVAS_SIDE = IS_IOS ? 4096 * 4 : 32_000;
+/** Масштаб, при котором холст w×h (при scale=1) помещается в пределы браузера */
+const canvasFit = (w, h, scale) => Math.min(scale, Math.sqrt(MAX_CANVAS_AREA / (w * h)), MAX_CANVAS_SIDE / w, MAX_CANVAS_SIDE / h);
 
 function bytesToBase64(u8) {
   let s = '';
@@ -301,7 +320,7 @@ async function sniff(file) {
 /* ========================== ИЗОБРАЖЕНИЯ ========================== */
 
 /** Страницы TIFF (сканы часто многостраничные) → холсты. Браузеры TIFF сами не открывают. */
-async function tiffCanvases(file, maxPages = 500) {
+async function tiffCanvases(file, maxPages = 5000) {
   await loadLib('pako'); // нужен UTIF для сжатия Deflate
   await loadLib('utif');
   const buf = await file.arrayBuffer();
@@ -837,7 +856,12 @@ function getOcrWorker() {
   if (!ocrWorkerPromise) {
     ocrWorkerPromise = (async () => {
       await loadLib('tesseract');
-      return Tesseract.createWorker(['rus', 'eng'], 1, { logger: (m) => ocrLogger && ocrLogger(m) });
+      return Tesseract.createWorker(['rus', 'eng'], 1, {
+        logger: (m) => ocrLogger && ocrLogger(m),
+        workerPath: vendorUrl('npm/tesseract.js@5.1.1/dist/worker.min.js'),
+        corePath: vendorUrl('npm/tesseract.js-core@5.1.1'),
+        langPath: vendorUrl('tessdata'),
+      });
     })().catch((e) => {
       ocrWorkerPromise = null;
       throw new Error('Не удалось запустить распознавание текста: ' + (e.message || e));
@@ -954,7 +978,8 @@ async function getPdfJs() {
 
 async function renderPdfPage(page, targetWidth) {
   const base = page.getViewport({ scale: 1 });
-  const viewport = page.getViewport({ scale: Math.min(4, targetWidth / base.width) });
+  // большие листы (чертежи А0 и т. п.) уменьшаются ровно настолько, чтобы браузер смог их нарисовать
+  const viewport = page.getViewport({ scale: canvasFit(base.width, base.height, Math.min(4, targetWidth / base.width)) });
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
@@ -963,13 +988,14 @@ async function renderPdfPage(page, targetWidth) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   // intent 'print' — без requestAnimationFrame, иначе в фоновой вкладке отрисовка замирает
   await page.render({ canvasContext: ctx, viewport, intent: 'print' }).promise;
+  try { page.cleanup(); } catch { /* освобождаем память страницы */ }
   return canvas;
 }
 
 /** Перебор страниц PDF: { index, total, canvas(), text } */
 async function* pdfPages(file, width = 1700) {
   const pdfjs = await getPdfJs();
-  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), ...PDFJS_OPTS() }).promise;
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
@@ -1454,7 +1480,7 @@ async function pagesToPdf(file, ext, opts, onProgress, onStatus) {
  */
 async function pdfToXlsx(file, onProgress, onStatus) {
   const pdfjs = await getPdfJs();
-  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), ...PDFJS_OPTS() }).promise;
   await loadLib('xlsx');
   const wb = XLSX.utils.book_new();
   const toCell = (s) => {
@@ -1814,7 +1840,7 @@ async function mobiToHtml(file) {
       return mime ? `<img src="data:${mime};base64,${bytesToBase64(r)}">` : '';
     });
   }
-  html = html.replace(/<mbp:pagebreak\s*\/?>/gi, '<hr>').replace(/<\/?mbp:[^>]*>/gi, '');
+  html = html.replace(/<mbp:pagebreak\s*\/?>/gi, '<hr class="page">').replace(/<\/?mbp:[^>]*>/gi, '');
   if (!/<(p|div|br|h\d)\b/i.test(html)) return textToHtml(html); // старые PRC — простой текст
   const doc = new DOMParser().parseFromString(html, 'text/html');
   doc.querySelectorAll('script, style').forEach((x) => x.remove());
@@ -2018,7 +2044,7 @@ async function rtfToHtml(rtf) {
     }));
     return '<table>' + grid.map((row) => '<tr>' + row.filter((c) => !c.skip).map((c) => `<td${c.cs > 1 ? ` colspan="${c.cs}"` : ''}${c.rs > 1 ? ` rowspan="${c.rs}"` : ''}>${c.html}</td>`).join('') + '</tr>').join('') + '</table>';
   };
-  const html = items.map((it) => (it.pageBreak ? '<hr>' : it.rows ? tableHtml(it.rows) : paraHtml(it))).filter(Boolean).join('\n');
+  const html = items.map((it) => (it.pageBreak ? '<hr class="page">' : it.rows ? tableHtml(it.rows) : paraHtml(it))).filter(Boolean).join('\n');
   if (!html.replace(/<hr>/g, '').trim()) throw new Error('В RTF не найден текст.');
   return html;
 }
@@ -2283,6 +2309,13 @@ async function htmlToPdfText(html, title, opt = {}) {
   const root = document.createElement('div');
   root.innerHTML = html;
   root.querySelectorAll('script, style, link, meta, iframe, object, video, audio, svg, input, button').forEach((n) => n.remove());
+  // разрыв страницы (слайды PPT, разрывы в DOC/MOBI) — следующий блок с новой страницы
+  for (const hr of [...root.querySelectorAll('hr.page')]) {
+    let next = hr.nextElementSibling;
+    while (next && next.matches('hr.page')) next = next.nextElementSibling;
+    if (next) next.classList.add('pdf-pagebreak-before');
+    hr.remove();
+  }
   for (const img of [...root.querySelectorAll('img')]) {
     const s = img.getAttribute('src') || '';
     try {
@@ -2296,6 +2329,14 @@ async function htmlToPdfText(html, title, opt = {}) {
     } catch { img.remove(); }
   }
   const content = htmlToPdfmake(root.innerHTML, { window });
+  // класс pdf-pagebreak-before (html-to-pdfmake кладёт классы в style) → разрыв страницы pdfmake
+  const breaks = (n) => {
+    if (Array.isArray(n)) { n.forEach(breaks); return; }
+    if (!n || typeof n !== 'object') return;
+    if ([].concat(n.style || []).includes('pdf-pagebreak-before')) n.pageBreak = 'before';
+    ['stack', 'text', 'ul', 'ol', 'columns'].forEach((k) => Array.isArray(n[k]) && breaks(n[k]));
+  };
+  breaks(content);
   const fit = (n) => {
     if (Array.isArray(n)) { n.forEach(fit); return; }
     if (!n || typeof n !== 'object') return;
@@ -2318,7 +2359,7 @@ async function htmlToPdfText(html, title, opt = {}) {
     defaultStyle: { font: 'Roboto', fontSize: opt.fontSize || 11, lineHeight: 1.25 },
   };
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('pdfmake timeout')), 120000);
+    const timer = setTimeout(() => reject(new Error('pdfmake timeout')), Math.max(120000, layoutTimeout(JSON.stringify(content).length)));
     try {
       pdfMake.createPdf(dd).getBlob((b) => { clearTimeout(timer); resolve(b); });
     } catch (e) { clearTimeout(timer); reject(e); }
@@ -3752,6 +3793,8 @@ async function prepareOffline() {
   const btn = $('offlineBtn');
   btn.disabled = true;
   const sw = 'serviceWorker' in navigator && navigator.serviceWorker.controller;
+  // просим браузер не удалять скачанные модули при нехватке места
+  try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch { /* не поддерживается */ }
   try {
     const names = Object.keys(CDN).filter((k) => k !== 'pdfjsWorker');
     for (let i = 0; i < names.length; i++) {
@@ -3807,7 +3850,7 @@ if (onThisPC && location.protocol.startsWith('http')) { pollAdmin(); setInterval
     const st = await (await fetch('/api/status', { cache: 'no-store' })).json();
     if (!st.server) return;
     pcFeatures = true;
-    officeAvailable = !!st.office;
+    officeAvailable = !!st.office && !TEST_MODE;
     document.body.classList.add('pc');
     // файлы, добавленные до ответа сервера, определяем заново
     for (const it of items) {
