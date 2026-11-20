@@ -3779,7 +3779,7 @@ async function prepareOffline() {
 $('offlineBtn').onclick = prepareOffline;
 try { if (localStorage.getItem('bcOffline')) $('offlineMsg').textContent = '✓ Подготовлено к работе без интернета.'; } catch { /* нет доступа */ }
 
-/* ---- Администратор: кнопка и счётчик новых запросов доступа (только на этом компьютере) ---- */
+/* ---- Администратор: кнопка и счётчик посетителей за сегодня (только на этом компьютере) ---- */
 
 async function pollAdmin() {
   try {
@@ -3787,10 +3787,14 @@ async function pollAdmin() {
     if (!r.ok) return;
     const s = await r.json();
     $('adminBtn').hidden = false;
+    // счётчик посетителей за сегодня: публичный сайт + этот компьютер
     const b = $('adminBadge');
-    b.hidden = !s.pending;
-    b.textContent = s.pending || '';
-    $('adminBtn').title = s.pending ? `Ждут разрешения: ${s.pending}` : 'Доступ через интернет';
+    const t = s.today || {};
+    const n = (t.local || 0) + (t.site || 0);
+    b.hidden = false;
+    b.classList.add('visitors');
+    b.textContent = `👁 ${n}`;
+    $('adminBtn').title = `Посетителей сегодня: ${n}` + (t.site == null ? ' (только этот компьютер — подключите ключ GoatCounter, чтобы видеть публичный сайт)' : ` — сайт ${t.site}, этот компьютер ${t.local || 0}`);
   } catch { /* сервер недоступен */ }
 }
 if (onThisPC && location.protocol.startsWith('http')) { pollAdmin(); setInterval(pollAdmin, 10000); }

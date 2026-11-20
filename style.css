@@ -172,6 +172,7 @@ input[type=range] { accent-color: var(--accent); }
 .qr-card a { color: var(--accent); font-weight: 600; word-break: break-all; }
 a.btn { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
 .count-badge { background: var(--err); color: #fff; border-radius: 10px; padding: 0 7px; font-size: 12px; line-height: 18px; }
+.count-badge.visitors { background: var(--accent); }
 
 /* ---- ссылки в строке файла ---- */
 .row-links { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 2px; }
