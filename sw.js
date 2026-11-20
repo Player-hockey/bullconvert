@@ -1,6 +1,6 @@
-// BullConvert service worker: приложение открывается без сети,
-// а библиотеки с CDN после первого использования берутся из кэша.
-const VERSION = 'bc-v20';
+﻿// BullConvert service worker: РїСЂРёР»РѕР¶РµРЅРёРµ РѕС‚РєСЂС‹РІР°РµС‚СЃСЏ Р±РµР· СЃРµС‚Рё,
+// Р° Р±РёР±Р»РёРѕС‚РµРєРё СЃ CDN РїРѕСЃР»Рµ РїРµСЂРІРѕРіРѕ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ Р±РµСЂСѓС‚СЃСЏ РёР· РєСЌС€Р°.
+const VERSION = 'bc-v21';
 const SHELL = `${VERSION}-shell`;
 const LIBS = `${VERSION}-libs`;
 const SHELL_FILES = [
@@ -24,10 +24,10 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // API сервера (КОМПАС, архивы) — только по сети
+  // API СЃРµСЂРІРµСЂР° (РљРћРњРџРђРЎ, Р°СЂС…РёРІС‹) вЂ” С‚РѕР»СЊРєРѕ РїРѕ СЃРµС‚Рё
   if (url.origin === location.origin && url.pathname.startsWith('/api/')) return;
 
-  // Свои файлы: сначала сеть (чтобы обновления приходили сразу), без сети — кэш
+  // РЎРІРѕРё С„Р°Р№Р»С‹: СЃРЅР°С‡Р°Р»Р° СЃРµС‚СЊ (С‡С‚РѕР±С‹ РѕР±РЅРѕРІР»РµРЅРёСЏ РїСЂРёС…РѕРґРёР»Рё СЃСЂР°Р·Сѓ), Р±РµР· СЃРµС‚Рё вЂ” РєСЌС€
   if (url.origin === location.origin) {
     e.respondWith((async () => {
       try {
@@ -41,8 +41,8 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Библиотеки с CDN: версии зафиксированы — кэш, иначе сеть
-  // staticimgly.com — модель нейросети для удаления фона
+  // Р‘РёР±Р»РёРѕС‚РµРєРё СЃ CDN: РІРµСЂСЃРёРё Р·Р°С„РёРєСЃРёСЂРѕРІР°РЅС‹ вЂ” РєСЌС€, РёРЅР°С‡Рµ СЃРµС‚СЊ
+  // staticimgly.com вЂ” РјРѕРґРµР»СЊ РЅРµР№СЂРѕСЃРµС‚Рё РґР»СЏ СѓРґР°Р»РµРЅРёСЏ С„РѕРЅР°
   if (/(^|\.)(jsdelivr\.net|djvu\.js\.org|staticimgly\.com)$/.test(url.hostname)) {
     e.respondWith((async () => {
       const cached = await caches.match(req);
