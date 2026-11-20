@@ -498,3 +498,14 @@ async function translateItem(item) {
   }
   refreshRow(item); updateToolbar();
 }
+
+/* ------------------------------ Уведомление о конфиденциальности ------------------------------ */
+
+(() => {
+  const bar = $('privacyBar');
+  if (!bar) return;
+  let seen = false;
+  try { seen = !!localStorage.getItem('bcPrivacyOk'); } catch { /* приватный режим — показываем */ }
+  bar.hidden = seen;
+  $('privacyOk').onclick = () => { bar.hidden = true; try { localStorage.setItem('bcPrivacyOk', '1'); } catch { /* приватный режим */ } };
+})();

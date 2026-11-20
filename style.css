@@ -307,3 +307,12 @@ body:not(.pc) .only-pc { display: none !important; }
 .sheet-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .sheet-lines polygon { fill: rgba(59, 91, 219, .15); stroke: #3b5bdb; stroke-width: 3; vector-effect: non-scaling-stroke; }
 .sheet-corner { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: #fff; border: 3px solid #3b5bdb; box-shadow: 0 1px 4px rgba(0,0,0,.5); cursor: grab; touch-action: none; z-index: 2; }
+
+/* защита данных */
+.privacy-note { margin-top: 28px; padding-bottom: 80px; }
+.privacy-note p { color: var(--muted); max-width: 820px; }
+.privacy-note b { color: var(--text); }
+.privacy-bar { position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 40; display: flex; gap: 12px; align-items: center; justify-content: space-between;
+  max-width: 760px; margin: 0 auto; padding: 10px 14px; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.18); font-size: .92em; }
+.privacy-bar[hidden] { display: none; }
+@media (max-width: 520px) { .privacy-bar { flex-direction: column; align-items: stretch; } }

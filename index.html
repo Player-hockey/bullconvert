@@ -43,8 +43,8 @@
     <details class="settings">
       <summary>Настройки</summary>
       <div class="settings-grid">
-        <label>Качество JPG / WEBP: <b id="qualityVal">90</b>%
-          <input id="quality" type="range" min="10" max="100" value="90">
+        <label>Качество JPG / WEBP: <b id="qualityVal">100</b>%
+          <input id="quality" type="range" min="10" max="100" value="100">
         </label>
         <label>Макс. ширина изображения, px
           <input id="maxWidth" type="number" min="1" placeholder="без изменений">
@@ -89,24 +89,32 @@
     <section class="formats">
       <h2>Что умеет</h2>
       <div class="formats-grid">
-        <div><h3>Инструменты PDF</h3><p><b>Всё в один PDF</b> — фото, Word, Excel, презентации и PDF вместе; <b>разделить</b>, <b>удалить/повернуть/переставить</b> страницы, <b>сжать</b>, вставить <b>текст и подпись</b> (в том числе нарисованную от руки), <b>заполнить бланк</b> с полями, <b>сравнить</b> две версии документа, <b>номера страниц</b> и <b>водяной знак</b>, <b>пароль</b> (AES-256) — поставить и снять, <b>скрыть данные</b> с настоящим удалением из файла</p></div>
-        <div><h3>Старый Word и PowerPoint</h3><p>DOC → <b>PDF, DOCX, TXT, HTML, Markdown, EPUB, FB2</b>; PPT → <b>PDF, DOCX, TXT, HTML</b>; PPTX → слайды <b>PDF</b> и <b>JPG</b>. Без Microsoft Office<span class="only-pc">, а с Office на этом компьютере — точное оформление, ещё RTF, ODT и PPT → PPTX, JPG</span></p></div>
-        <div class="only-pc"><h3>КОМПАС-3D и AutoCAD</h3><p>Чертежи CDW, FRW → <b>PDF, DWG, DXF, PNG, JPG</b>; спецификации SPW → <b>PDF</b>; модели M3D, A3D → <b>STEP, STL, IGES, PNG, PDF</b>; DWG, DXF → <b>PDF, CDW, PNG</b>. Нужен установленный КОМПАС-3D.</p></div>
-        <div><h3>Чертежи DXF</h3><p>DXF (AutoCAD и другие САПР) → <b>PDF</b> (векторный), <b>SVG, PNG, JPG</b> прямо в браузере: линии, дуги, окружности, сплайны, тексты, блоки, размеры, цвета слоёв</p></div>
-        <div class="only-pc"><h3>Резервные копии .BAK</h3><p>Копии КОМПАС и AutoCAD: формат определяется по содержимому, дальше — как обычный чертёж или модель</p></div>
-        <div><h3>PDF и DjVu</h3><p>PDF → <b>DOCX, Excel (таблицы), TXT, EPUB, FB2, PNG, JPG</b>; DjVu → <b>PDF, PNG, JPG, DOCX, TXT</b>. Сканы распознаются (русский и английский); <b>PDF с поиском</b> — скан, в котором можно искать и копировать текст. В Word — с абзацами, заголовками и картинками</p></div>
-        <div><h3>Электронные книги</h3><p>EPUB, FB2, MOBI, AZW, PRC → <b>PDF, DOCX, EPUB, FB2, TXT, HTML</b></p></div>
-        <div><h3>Документы</h3><p>Word (DOCX), RTF, ODT, TXT, Markdown, HTML (любая кодировка, в т.ч. старая Windows-1251) → <b>PDF, DOCX, JPG, PNG, EPUB, FB2, HTML, Markdown, TXT</b>. Из DOCX в PDF — как в Word: поля, отступы, пустые строки, шрифты, таблицы с границами, формулы, надписи и номера страниц; презентации PowerPoint (PPTX) → <b>DOCX, TXT, HTML</b></p></div>
-        <div><h3>Фото</h3><p>HEIC/HEIF с iPhone, TIFF (в т.ч. многостраничные сканы), PNG, JPG, WEBP, BMP, GIF, SVG, ICO, AVIF → <b>PNG, JPG, WEBP, PDF, GIF, TIFF, BMP, ICO</b></p></div>
-        <div><h3>Фоторедактор</h3><p><b>Обрезать, повернуть, отразить, изменить размер</b>, <b>сжать до нужного размера</b> («не больше 1 МБ»), <b>убрать фон</b> нейросетью, <b>выровнять лист</b> на фото (края находятся сами), <b>скан документа</b> — чистый чёрно-белый скан без теней; несколько фото — в один <b>многостраничный скан PDF</b> с поиском, <b>склеить</b> несколько фото в одно</p></div>
-        <div><h3>Фото → текст</h3><p>Распознавание текста со снимка или скриншота (русский и английский) → <b>TXT, DOCX</b> и <b>PDF с поиском</b></p></div>
-        <div><h3>Таблицы и данные</h3><p>XLSX, XLS, ODS, CSV, TSV, JSON, XML, YAML → <b>PDF, XLSX, DOCX, CSV, TSV, JSON, YAML, XML, HTML, Markdown</b>. Excel → PDF как в Excel: ширины, объединения, границы, заливка, шрифты; фото и сканы таблиц → <b>Excel</b>; XML-структура — деревом</p></div>
-        <div><h3>Аудио и видео</h3><p>MP3, WAV, OGG, M4A, FLAC, MP4, WEBM, MOV → <b>MP3, WAV</b>; видео → <b>MP4, WEBM</b> (в реальном времени), <b>GIF</b> и <b>кадры JPG</b>. <b>Обрезка</b> по времени</p></div>
-        <div><h3>Удобство</h3><p><b>История</b> конвертаций на устройстве, <b>«Поделиться»</b> результатом с телефона, <b>упаковка в ZIP</b>, <b>шаблон имени</b> результатов, запоминание выбранных форматов, <b>перевод документов</b> (русский ↔ английский, на устройстве), <b>DOCX по ГОСТ</b> одной кнопкой, <b>английский</b> интерфейс (EN)</p></div>
-        <div><h3>Архивы и папки</h3><p>ZIP<span class="only-pc">, RAR, 7Z, TAR, GZ</span> и целые папки — распаковываются, всё внутри сразу готово к конвертации. Файлы без расширения определяются по содержимому</p></div>
+        <div><h3>Документы</h3><p>DOCX, DOC, RTF, ODT, TXT, Markdown, HTML → <b>PDF, DOCX, DOCX по ГОСТ, EPUB, FB2, HTML, Markdown, TXT, PNG, JPG</b></p></div>
+        <div><h3>PDF</h3><p>PDF → <b>DOCX, DOCX по ГОСТ, Excel, PDF с поиском, TXT, Markdown, HTML, EPUB, FB2, PNG, JPG</b></p></div>
+        <div><h3>DjVu</h3><p>DjVu → <b>PDF, PDF с поиском, DOCX, TXT, Markdown, HTML, EPUB, FB2, PNG, JPG</b></p></div>
+        <div><h3>Презентации</h3><p>PPTX → <b>PDF, JPG, DOCX, TXT, Markdown, HTML</b>; PPT → <b>PDF, DOCX, TXT, Markdown, HTML</b><span class="only-pc">, а также <b>PPTX, JPG</b></span></p></div>
+        <div><h3>Электронные книги</h3><p>EPUB, FB2, MOBI, AZW, PRC → <b>PDF, DOCX, EPUB, FB2, TXT, Markdown, HTML, PNG, JPG</b></p></div>
+        <div><h3>Фото</h3><p>HEIC, TIFF, PNG, JPG, WEBP, BMP, GIF, SVG, ICO, AVIF → <b>PNG, JPG, WEBP, PDF, PDF с поиском, PNG без фона, GIF, TIFF, BMP, ICO, TXT, DOCX, Excel</b></p></div>
+        <div><h3>Таблицы и данные</h3><p>XLSX, XLS, ODS, CSV, TSV, JSON, XML, YAML → <b>PDF, XLSX, DOCX, CSV, TSV, JSON, YAML, XML, HTML, Markdown</b></p></div>
+        <div><h3>Аудио</h3><p>MP3, WAV, OGG, M4A, FLAC → <b>MP3, WAV</b></p></div>
+        <div><h3>Видео</h3><p>MP4, WEBM, MOV, MKV → <b>MP4, WEBM, GIF, MP3, WAV, кадры JPG</b></p></div>
+        <div><h3>Чертежи DXF</h3><p>DXF → <b>PDF, SVG, PNG, JPG</b></p></div>
+        <div class="only-pc"><h3>КОМПАС-3D и AutoCAD</h3><p>CDW, FRW → <b>PDF, DWG, DXF, PNG, JPG</b>; SPW → <b>PDF</b>; M3D, A3D → <b>STEP, STL, IGES, PNG, JPG, PDF</b>; DWG → <b>PDF, DXF, CDW, PNG, JPG</b></p></div>
       </div>
     </section>
+
+    <section class="privacy-note" id="privacy">
+      <h2>Защита данных</h2>
+      <p>Файлы конвертируются <b>прямо на вашем устройстве</b> — в браузере. Они не загружаются на сервер, их никто не видит и не хранит. Сайт не требует регистрации, не использует рекламу, счётчики посещений и сторонние cookie.</p>
+      <p>История конвертаций, настройки и сохранённая подпись хранятся только в вашем браузере — их можно удалить в любой момент.</p>
+      <p><a href="privacy.html">Политика конфиденциальности</a></p>
+    </section>
   </main>
+
+  <div class="privacy-bar" id="privacyBar" hidden>
+    <span>🔒 Файлы конвертируются на вашем устройстве и никуда не загружаются. <a href="privacy.html">Политика конфиденциальности</a></span>
+    <button class="btn sm" id="privacyOk">Понятно</button>
+  </div>
 
   <dialog id="devicesDlg" class="dlg">
     <form method="dialog" class="dlg-close"><button class="remove" aria-label="Закрыть">×</button></form>
