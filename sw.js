@@ -1,6 +1,6 @@
 // BullConvert service worker: приложение открывается без сети,
 // а библиотеки с CDN после первого использования берутся из кэша.
-const VERSION = 'bc-v18';
+const VERSION = 'bc-v19';
 const SHELL = `${VERSION}-shell`;
 const LIBS = `${VERSION}-libs`;
 const SHELL_FILES = [
