@@ -1,6 +1,6 @@
 // BullConvert service worker: приложение открывается без сети,
 // а библиотеки из vendor/ после первого использования берутся из кэша.
-const VERSION = 'bc-v22';
+const VERSION = 'bc-v23';
 const SHELL = `${VERSION}-shell`;
 // Библиотеки в vendor/ лежат по путям с номером версии — их кэш не сбрасывается при обновлении
 const LIBS = 'bc-vendor-1';
@@ -20,6 +20,17 @@ self.addEventListener('activate', (e) => {
   })());
 });
 
+// Изоляция страницы (COOP/COEP): нейросети считают сразу на всех ядрах процессора — в разы быстрее.
+// GitHub Pages таких заголовков не отдаёт, поэтому добавляем их здесь.
+function isolate(res) {
+  if (!res || res.type === 'opaque' || res.status === 0 || res.headers.get('Cross-Origin-Embedder-Policy')) return res;
+  const h = new Headers(res.headers);
+  h.set('Cross-Origin-Opener-Policy', 'same-origin');
+  h.set('Cross-Origin-Embedder-Policy', 'credentialless');
+  h.set('Cross-Origin-Resource-Policy', 'same-origin');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
@@ -32,10 +43,10 @@ self.addEventListener('fetch', (e) => {
   if (url.origin === location.origin && url.pathname.includes('/vendor/')) {
     e.respondWith((async () => {
       const cached = await caches.match(req, { cacheName: LIBS });
-      if (cached) return cached;
+      if (cached) return isolate(cached);
       const res = await fetch(req);
       if (res.ok && res.status === 200) (await caches.open(LIBS)).put(req, res.clone());
-      return res;
+      return isolate(res);
     })());
     return;
   }
@@ -46,9 +57,9 @@ self.addEventListener('fetch', (e) => {
       try {
         const res = await fetch(req);
         if (res.ok) (await caches.open(SHELL)).put(req, res.clone());
-        return res;
+        return isolate(res);
       } catch {
-        return (await caches.match(req, { ignoreSearch: true })) || (await caches.match('index.html'));
+        return isolate((await caches.match(req, { ignoreSearch: true })) || (await caches.match('index.html')));
       }
     })());
     return;

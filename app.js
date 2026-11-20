@@ -852,22 +852,66 @@ async function convertData(file, ext, target) {
 
 let ocrWorkerPromise = null;
 let ocrLogger = null;
+function createOcrWorker(log = true) {
+  return (async () => {
+    await loadLib('tesseract');
+    return Tesseract.createWorker(['rus', 'eng'], 1, {
+      logger: log ? (m) => ocrLogger && ocrLogger(m) : () => {},
+      workerPath: vendorUrl('npm/tesseract.js@5.1.1/dist/worker.min.js'),
+      corePath: vendorUrl('npm/tesseract.js-core@5.1.1'),
+      langPath: vendorUrl('tessdata'),
+    });
+  })();
+}
 function getOcrWorker() {
   if (!ocrWorkerPromise) {
-    ocrWorkerPromise = (async () => {
-      await loadLib('tesseract');
-      return Tesseract.createWorker(['rus', 'eng'], 1, {
-        logger: (m) => ocrLogger && ocrLogger(m),
-        workerPath: vendorUrl('npm/tesseract.js@5.1.1/dist/worker.min.js'),
-        corePath: vendorUrl('npm/tesseract.js-core@5.1.1'),
-        langPath: vendorUrl('tessdata'),
-      });
-    })().catch((e) => {
+    ocrWorkerPromise = createOcrWorker().catch((e) => {
       ocrWorkerPromise = null;
       throw new Error('Не удалось запустить распознавание текста: ' + (e.message || e));
     });
   }
   return ocrWorkerPromise;
+}
+
+/* Многостраничные сканы: несколько распознавателей работают одновременно (по ядрам процессора) */
+const OCR_POOL_SIZE = IS_IOS ? 1 : Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 2) / 2)));
+const ocrExtraWorkers = [];
+async function ocrRunner(pagesNeeded = 2) {
+  const want = Math.min(OCR_POOL_SIZE, Math.max(1, pagesNeeded));
+  const main = await getOcrWorker();
+  while (ocrExtraWorkers.length < want - 1) ocrExtraWorkers.push(createOcrWorker(false).catch(() => null));
+  const ws = [main, ...(await Promise.all(ocrExtraWorkers.slice(0, want - 1))).filter(Boolean)];
+  const free = [...ws], waiting = [];
+  const acquire = () => (free.length ? Promise.resolve(free.pop()) : new Promise((r) => waiting.push(r)));
+  const release = (w) => (waiting.length ? waiting.shift()(w) : free.push(w));
+  return {
+    size: ws.length,
+    async run(fn) { const w = await acquire(); try { return await fn(w); } finally { release(w); } },
+  };
+}
+
+/** Упорядоченная параллельная обработка: submit(i, promise) и flush по порядку; в работе не больше limit задач */
+function orderedPipe(limit, onReady) {
+  const pending = new Map();
+  let next = 0;
+  const flush = async () => {
+    while (pending.has(next)) {
+      const v = await pending.get(next);
+      pending.delete(next);
+      await onReady(next, v);
+      next++;
+    }
+  };
+  return {
+    async submit(i, promise) {
+      promise.catch(() => {}); // ошибку покажет flush
+      pending.set(i, promise);
+      while (pending.size > limit) { await pending.get(next); await flush(); }
+      await flush();
+    },
+    skip(i, value) { pending.set(i, Promise.resolve(value)); },
+    async done() { while (pending.size) { await pending.get(next); await flush(); } },
+  };
 }
 
 async function ocrCanvas(canvas, onStatus, onFraction) {
@@ -886,9 +930,9 @@ async function ocrCanvas(canvas, onStatus, onFraction) {
  * Страница-скан в PDF: картинка на всю страницу, поверх — невидимый распознанный текст на тех же местах.
  * worker = null — без распознавания. size — { width, height } в pt, иначе A4 по ширине.
  */
-async function addScanPage(out, font, c, worker, size, onFrac = () => {}) {
-  let data = null;
-  if (worker) {
+async function addScanPage(out, font, c, worker, size, onFrac = () => {}, preData = null) {
+  let data = preData;
+  if (worker && !data) {
     ocrLogger = (m) => { if (m.status === 'recognizing text') onFrac(m.progress); };
     try { ({ data } = await worker.recognize(c, {}, { text: true, blocks: true })); } finally { ocrLogger = null; }
   }
@@ -940,26 +984,26 @@ async function searchablePdf(file, ext, onProgress, onStatus) {
     URL.revokeObjectURL(url);
     pages.push({ canvas: () => c });
   }
-  const worker = await getOcrWorker();
-  let recognized = 0;
+  const need = pages.filter((pg) => !(srcDoc && pg.text && pg.text.replace(/\s/g, '').length >= 10)).length;
+  const runner = need ? await ocrRunner(need) : null;
+  let recognized = 0, doneCount = 0;
+  // страницы распознаются параллельно, а в PDF добавляются строго по порядку
+  const pipe = orderedPipe(runner ? runner.size + 1 : 1, async (i, v) => {
+    if (v.copy) { const [copy] = await out.copyPages(srcDoc, [i]); out.addPage(copy); }
+    else { await addScanPage(out, font, v.c, null, v.size, () => {}, v.data); v.c.width = v.c.height = 0; recognized++; }
+    onProgress(++doneCount / pages.length);
+    onStatus(`Распознавание текста: готово ${doneCount} из ${pages.length}…`);
+  });
   for (let i = 0; i < pages.length; i++) {
     const pg = pages[i];
     // страница PDF уже с текстом — переносим как есть
-    if (srcDoc && pg.text && pg.text.replace(/\s/g, '').length >= 10) {
-      const [copy] = await out.copyPages(srcDoc, [i]);
-      out.addPage(copy);
-      onProgress((i + 1) / pages.length);
-      continue;
-    }
-    onStatus(`Распознавание текста: страница ${i + 1} из ${pages.length}…`);
+    if (srcDoc && pg.text && pg.text.replace(/\s/g, '').length >= 10) { pipe.skip(i, { copy: true }); continue; }
     const c = await pg.canvas();
     // размер страницы: как у исходного PDF, иначе A4 по ширине картинки
     const size = srcDoc ? srcDoc.getPage(i).getSize() : null;
-    await addScanPage(out, font, c, worker, size, (f) => onProgress((i + f) / pages.length));
-    recognized++;
-    c.width = c.height = 0;
-    onProgress((i + 1) / pages.length);
+    await pipe.submit(i, runner.run((w) => w.recognize(c, {}, { text: true, blocks: true })).then(({ data }) => ({ c, size, data })));
   }
+  await pipe.done();
   out.setProducer('BullConvert');
   const bytes = await out.save();
   return { blob: new Blob([bytes], { type: 'application/pdf' }), ext: 'pdf', note: recognized ? `распознано стр.: ${recognized}` : 'текст уже был' };
@@ -1589,27 +1633,39 @@ async function imageToXlsx(file, ext, opts, onProgress, onStatus) {
 /** Текст всех страниц; страницы без текстового слоя (сканы) распознаются OCR. */
 async function pagesToHtml(file, ext, onProgress, onStatus) {
   const pages = [];
-  let ocrCount = 0;
+  let ocrCount = 0, runner = null, pipe = null, done = 0;
   for await (const pg of pagesOf(file, ext)) {
-    let text = pg.text;
+    const text = pg.text;
     if (text.replace(/\s/g, '').length < 10) {
+      // скан: распознаём в нескольких потоках, пока следующие страницы уже рисуются
       ocrCount++;
+      if (!runner) {
+        if (!ocrWorkerPromise) onStatus('Загрузка модуля распознавания текста (один раз)…');
+        runner = await ocrRunner(pg.total);
+        pipe = orderedPipe(runner.size + 1, (i, t) => { if (t != null) pages[i] = textToHtml(t); onProgress(++done / pg.total * 0.9); });
+        for (let k = 0; k < pages.length; k++) pipe.skip(k, null); // страницы до первого скана уже готовы
+      }
       onStatus(`Распознавание текста: страница ${pg.index} из ${pg.total}…`);
       const c = await pg.canvas();
-      text = await ocrCanvas(c, onStatus, (f) => onProgress(((pg.index - 1) + f) / pg.total * 0.9));
-      c.width = c.height = 0;
-    } else {
-      onStatus(`Чтение: страница ${pg.index} из ${pg.total}…`);
-      // PDF с текстовым слоем: абзацы, заголовки и картинки по разметке страницы
-      if (pg.html) {
-        try { const h = await pg.html(); if (h.trim()) { pages.push(h); onProgress(pg.index / pg.total * 0.9); continue; } }
-        catch (e) { console.warn('Разметка страницы не удалась, беру просто текст:', e); }
-      }
+      const idx = pages.length;
+      pages.push('');
+      await pipe.submit(idx, runner.run((w) => w.recognize(c)).then(({ data }) => { c.width = c.height = 0; return data.text; }));
+      if (pg.release) pg.release();
+      continue;
+    }
+    onStatus(`Чтение: страница ${pg.index} из ${pg.total}…`);
+    let html = '';
+    // PDF с текстовым слоем: абзацы, заголовки и картинки по разметке страницы
+    if (pg.html) {
+      try { const h = await pg.html(); html = h.trim() ? h : ''; }
+      catch (e) { console.warn('Разметка страницы не удалась, беру просто текст:', e); }
     }
     if (pg.release) pg.release();
-    pages.push(textToHtml(text));
-    onProgress(pg.index / pg.total * 0.9);
+    const idx = pages.length;
+    pages.push(html || textToHtml(text));
+    if (pipe) pipe.skip(idx, null); else onProgress(pg.index / pg.total * 0.9);
   }
+  if (pipe) await pipe.done();
   if (!pages.join('').replace(/<[^>]+>/g, '').trim()) throw new Error('Текст не найден — даже распознавание ничего не нашло.');
   if (ocrCount) onStatus(`Распознано страниц: ${ocrCount} из ${pages.length}. Сохранение…`);
   return pages.join('\n<hr>\n');
@@ -3186,13 +3242,17 @@ async function convertOffice(item, onStatus) {
 }
 
 /** Чертёж: DXF — в браузере (везде) или через КОМПАС (на компьютере владельца, с запасным путём) */
+const cadFailed = new Set(); // DXF, которые КОМПАС не открыл (до перезагрузки страницы)
 async function convertDrawing(item, opts, onStatus) {
   const { file, ext, target } = item;
   const inBrowser = ext === 'dxf' && typeof dxfConvert === 'function' && ['pdf', 'svg', 'png', 'jpg'].includes(target);
-  if (inBrowser && (!pcFeatures || target === 'svg')) return dxfConvert(file, target, opts, onStatus);
+  // КОМПАС уже не смог открыть этот файл — сразу рисуем в браузере (не ждём его повторно)
+  const key = `${file.name}|${file.size}|${file.lastModified}`;
+  if (inBrowser && (!pcFeatures || target === 'svg' || TEST_MODE || cadFailed.has(key))) return dxfConvert(file, target, opts, onStatus);
   try { return await convertCad(item, onStatus); }
   catch (e) {
     if (!inBrowser) throw e;
+    cadFailed.add(key);
     console.warn('КОМПАС не справился, рисую DXF в браузере:', e);
     const blob = await dxfConvert(file, target, opts, onStatus);
     return { blob, ext: target, warn: '⚠ без КОМПАС: нарисовано в браузере' };
@@ -3278,8 +3338,35 @@ async function addFiles(entries, parentPath = '', depth = 0) {
     rebuildTargets(item);
     refreshRow(item);
     if (item.cat === 'archive') unpack(item);
+    prefetchFor(item);
   }
   updateToolbar();
+}
+
+/** Пока пользователь выбирает формат, заранее загружаем нужные модули — конвертация начнётся без ожидания */
+const prefetched = new Set();
+function prefetchFor(item) {
+  if (!item || !item.cat || !item.target) return;
+  const e = canon(item.ext), t = item.target, libs = [];
+  if (e === 'pdf' || (item.cat === 'doc' && ['png', 'jpg'].includes(t))) libs.push('pdfjs');
+  if (['docx', 'odt', 'epub', 'pptx', 'xlsx', 'ods'].includes(e) || ['docx', 'gost', 'epub', 'xlsx'].includes(t)) libs.push('jszip');
+  if (e === 'docx') libs.push('mammoth');
+  if (item.cat === 'data' || t === 'xlsx' || ['xls', 'doc', 'ppt'].includes(e)) libs.push('xlsx');
+  if (t === 'pdf' && ['doc', 'data', 'cad'].includes(item.cat)) libs.push('pdfmake', 'pdfmakeFonts', 'htmlToPdfmake');
+  if (e === 'pptx' && t === 'pdf') libs.push('pdflib', 'fontkit');
+  if (['heic'].includes(e)) libs.push('heic2any');
+  if (e === 'djvu') libs.push('djvu');
+  if (['tiff'].includes(e)) libs.push('utif');
+  const todo = libs.filter((l) => !prefetched.has(l));
+  if (!todo.length) return;
+  todo.forEach((l) => prefetched.add(l));
+  const run = () => todo.forEach((l) => (l === 'pdfjs' ? getPdfJs() : loadLib(l)).catch(() => prefetched.delete(l)));
+  (window.requestIdleCallback || ((f) => setTimeout(f, 200)))(run);
+  // шрифты Word для точного PDF — тоже заранее
+  if (e === 'docx' && t === 'pdf' && typeof docxLoadFonts === 'function' && !prefetched.has('docxFonts')) {
+    prefetched.add('docxFonts');
+    setTimeout(() => Object.keys(DOCX_FONTS).forEach((f) => Object.keys(DOCX_FONT_STYLES).forEach((st) => fetch(docxFontUrl(f, st)).catch(() => {}))), 500);
+  }
 }
 
 /** Определение формата: по расширению, а для .bak, файлов без расширения и неизвестных — по содержимому. */
@@ -3388,7 +3475,7 @@ function buildRow(item) {
 
   const target = document.createElement('select');
   target.className = 'target';
-  target.onchange = () => { item.target = target.value; rememberTarget(item.ext, item.target); item.status = 'idle'; item.result = null; refreshRow(item); updateToolbar(); };
+  target.onchange = () => { item.target = target.value; rememberTarget(item.ext, item.target); item.status = 'idle'; item.result = null; refreshRow(item); updateToolbar(); prefetchFor(item); };
 
   const action = document.createElement('button');
   action.className = 'btn action';
@@ -3636,10 +3723,22 @@ window.addEventListener('drop', (e) => e.preventDefault());
 
 $('quality').oninput = (e) => { $('qualityVal').textContent = e.target.value; };
 
+// Несколько файлов — параллельно (по числу ядер), а тяжёлые (видео, нейросети, распознавание,
+// КОМПАС, файлы больше 50 МБ) — по одному, чтобы не упереться в память
+const PARALLEL = IS_IOS ? 1 : Math.max(1, Math.min(3, Math.floor((navigator.hardwareConcurrency || 2) / 2)));
+const heavyItem = (it) => it.cat === 'media' || it.cat === 'cad' || it.file.size > 50 * 1048576
+  || ['nobg', 'spdf', 'gost'].includes(it.target) || (it.cat === 'image' && ['txt', 'docx', 'xlsx'].includes(it.target))
+  || (canon(it.ext) === 'pdf' && ['xlsx', 'docx'].includes(it.target));
 $('convertAll').onclick = async () => {
+  const running = new Set();
+  const start = (item) => { const p = convertItem(item).finally(() => running.delete(p)); running.add(p); };
   for (const item of [...items]) {
-    if (item.cat && item.cat !== 'archive' && item.status !== 'done' && item.status !== 'work') await convertItem(item);
+    if (!item.cat || item.cat === 'archive' || item.status === 'done' || item.status === 'work') continue;
+    if (heavyItem(item) || PARALLEL === 1) { await Promise.all(running); await convertItem(item); continue; }
+    while (running.size >= PARALLEL) await Promise.race(running);
+    start(item);
   }
+  await Promise.all(running);
 };
 
 $('clearAll').onclick = () => {
@@ -3672,6 +3771,13 @@ const onThisPC = ['localhost', '127.0.0.1', 'bullconvert.localhost'].includes(lo
 
 if ('serviceWorker' in navigator && window.isSecureContext && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service worker:', e));
+  // При первом заходе страница ещё не изолирована (нейросети считают в один поток).
+  // Как только service worker взял страницу под контроль — тихо перезагружаем, пока пользователь ничего не добавил.
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    let once = false;
+    try { once = !!sessionStorage.getItem('bcCoiReload'); sessionStorage.setItem('bcCoiReload', '1'); } catch { once = true; }
+    if (!window.crossOriginIsolated && !once && !items.length && !document.querySelector('dialog[open]:not(#consentDlg)')) location.reload();
+  });
 }
 
 // Файлы, открытые через «Открыть с помощью → BullConvert» в установленном приложении
