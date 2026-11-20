@@ -3090,7 +3090,6 @@ async function serverPost(path, file) {
   if (r.status === 404 || r.status === 405) {
     throw new Error('Этот формат здесь не поддерживается.');
   }
-  if (r.status === 401) throw new Error('Нужно разрешение администратора — обновите страницу и запросите доступ.');
   if (!r.ok) throw new Error(serverError(await r.text()));
   return { data: await r.arrayBuffer(), headers: r.headers };
 }
