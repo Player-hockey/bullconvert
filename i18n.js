@@ -74,7 +74,7 @@ const I18N_EN = {
   'PNG, JPG, WEBP, PDF, PDF с поиском, PNG без фона, GIF, TIFF, BMP, ICO, TXT, DOCX, Excel': 'PNG, JPG, WEBP, PDF, searchable PDF, PNG without background, GIF, TIFF, BMP, ICO, TXT, DOCX, Excel',
   'MP4, WEBM, GIF, MP3, WAV, кадры JPG': 'MP4, WEBM, GIF, MP3, WAV, JPG frames', ', а также ': ', and also ',
   'Файлы конвертируются ': 'Files are converted ', 'прямо на вашем устройстве': 'right on your device',
-  ' — в браузере. Они не загружаются на сервер, их никто не видит и не хранит. Сайт не требует регистрации, не использует рекламу, счётчики посещений и сторонние cookie.': ' — in the browser. They are not uploaded to a server; nobody sees or stores them. No sign-up, no ads, no visitor counters, no third-party cookies.',
+  ' — в браузере. Они не загружаются на сервер, их никто не видит и не хранит. Сайт не требует регистрации, не использует рекламу и cookie; посещения считаются только в обезличенном виде, без имён файлов и IP-адресов.': ' — in the browser. They are not uploaded to a server; nobody sees or stores them. No sign-up, no ads, no cookies; visits are counted anonymously, without file names or IP addresses.',
   'История конвертаций, настройки и сохранённая подпись хранятся только в вашем браузере — их можно удалить в любой момент.': 'Conversion history, settings and a saved signature stay only in your browser — you can delete them at any time.',
   'Политика конфиденциальности': 'Privacy policy (in Russian)', 'Понятно': 'Got it',
   'BullConvert обрабатывает файлы на вашем устройстве — они никуда не загружаются. Для использования приложения необходимо принять': 'BullConvert processes files on your device — they are never uploaded. To use the app, please accept the',

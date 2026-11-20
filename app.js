@@ -3502,6 +3502,7 @@ async function convertItem(item) {
     item.result = { blob, name: `${outputName(item, outExt)}${res.suffix || ''}.${outExt}`, path: item.path, note: res.note, warn: res.warn };
     item.status = 'done';
     if (typeof addHistory === 'function') addHistory(item.result).catch(() => {});
+    if (typeof statsConvert === 'function') statsConvert(target);
   } catch (e) {
     console.error(e);
     item.status = 'error';

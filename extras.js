@@ -502,7 +502,7 @@ async function translateItem(item) {
 /* ------------------------------ Согласие с Политикой конфиденциальности ------------------------------ */
 
 // редакция Политики: при её изменении согласие запрашивается заново
-const CONSENT_VERSION = '2026-11-20';
+const CONSENT_VERSION = '2026-11-20.2'; // ред. 2: подсчёт посещений
 function hasConsent() {
   try { const c = JSON.parse(localStorage.getItem('bcConsent') || 'null'); return !!c && c.v === CONSENT_VERSION; } catch { return false; }
 }
@@ -519,7 +519,43 @@ function hasConsent() {
   yes.onclick = () => {
     try { localStorage.setItem('bcConsent', JSON.stringify({ v: CONSENT_VERSION, at: new Date().toISOString() })); } catch { /* приватный режим: согласие действует до закрытия вкладки */ }
     dlg.close();
+    if (typeof statsStart === 'function') statsStart();
   };
   $('consentNo').onclick = () => { $('consentMsg').textContent = 'Без согласия использование BullConvert невозможно. Вы можете закрыть страницу.'; };
   dlg.showModal();
 })();
+
+/* ------------------------------ Статистика (видит только администратор) ------------------------------ */
+
+/**
+ * Подсчёт посещений и конвертаций — только после согласия с Политикой.
+ * Публичный сайт: GoatCounter (без cookie, IP не сохраняется). BullConvert на компьютере владельца:
+ * свой счётчик на сервере (только общие числа за день). Содержимое и имена файлов не передаются.
+ */
+const STATS = {
+  server: !location.hostname.endsWith('github.io') && location.protocol.startsWith('http') && !['localhost', '127.0.0.1', 'bullconvert.localhost'].includes(location.hostname),
+  gc: location.hostname.endsWith('github.io') && typeof SITE_CONFIG !== 'undefined' && !!SITE_CONFIG.goatcounter,
+  started: false,
+};
+function statsStart() {
+  if (STATS.started || !hasConsent()) return;
+  STATS.started = true;
+  if (STATS.gc) {
+    const s = document.createElement('script');
+    s.async = true;
+    s.src = 'https://gc.zgo.at/count.js';
+    s.dataset.goatcounter = `https://${SITE_CONFIG.goatcounter}.goatcounter.com/count`;
+    document.head.appendChild(s);
+  }
+  if (STATS.server) fetch('/api/stat?e=visit', { method: 'POST', keepalive: true }).catch(() => {});
+}
+/** Конвертация в формат target (передаётся только сам формат) */
+function statsConvert(target) {
+  if (!STATS.started) return;
+  const t = String(target || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
+  if (STATS.gc && window.goatcounter && window.goatcounter.count) {
+    try { window.goatcounter.count({ path: `convert-${t}`, title: `Конвертация в ${t.toUpperCase()}`, event: true }); } catch { /* счётчик недоступен */ }
+  }
+  if (STATS.server) fetch(`/api/stat?e=convert&t=${encodeURIComponent(t)}`, { method: 'POST', keepalive: true }).catch(() => {});
+}
+statsStart();
