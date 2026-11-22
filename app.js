@@ -75,7 +75,7 @@ const ARCHIVES = ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz'];
 const CATEGORIES = {
   image:   { label: 'Фото',    in: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'ico', 'svg', 'avif', 'heic', 'heif', 'tif', 'tiff'] },
   data:    { label: 'Данные',  in: ['csv', 'tsv', 'json', 'xlsx', 'xls', 'ods', 'xml', 'yaml', 'yml'] },
-  doc:     { label: 'Док',     in: ['txt', 'md', 'markdown', 'html', 'htm', 'docx', 'doc', 'dot', 'rtf', 'odt', 'pptx', 'ppsx', 'ppt', 'pps', 'pdf', 'djvu', 'djv', 'epub', 'fb2', 'mobi', 'azw', 'azw3', 'prc'] },
+  doc:     { label: 'Док',     in: ['txt', 'md', 'markdown', 'html', 'htm', 'docx', 'doc', 'dot', 'rtf', 'odt', 'pptx', 'ppsx', 'ppt', 'pps', 'pdf', 'djvu', 'djv', 'epub', 'fb2', 'mobi', 'azw', 'azw3', 'prc', 'odp', 'srt', 'vtt', 'eml'] },
   media:   { label: 'Медиа',   in: ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'webm', 'mp4', 'mov', 'mkv'] },
   cad:     { label: 'CAD',     in: [...CAD_2D, ...CAD_SPEC, ...CAD_ACAD, ...CAD_3D] },
   archive: { label: 'Архив',   in: ARCHIVES },
@@ -94,16 +94,20 @@ function targetsFor(cat, ext) {
   switch (cat) {
     // txt/docx у фото — распознавание текста со снимка
     case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'spdf', 'nobg', 'gif', 'tiff', 'bmp', 'ico', 'txt', 'docx', 'xlsx']);
-    case 'data':  return not(['pdf', 'xlsx', 'docx', 'csv', 'tsv', 'json', 'yaml', 'xml', 'html', 'md']);
+    case 'data':  return not(['pdf', 'xlsx', 'ods', 'xls', 'docx', 'csv', 'tsv', 'json', 'yaml', 'xml', 'html', 'md']);
     case 'doc':
-      if (ext === 'pdf') return ['docx', 'gost', 'spdf', 'xlsx', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
+      if (ext === 'pdf') return ['docx', 'gost', 'spdf', 'xlsx', 'odt', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
+      // субтитры: друг в друга и в документ (расшифровка с временем)
+      if (ext === 'srt' || ext === 'vtt') return [ext === 'srt' ? 'vtt' : 'srt', 'txt', 'docx', 'pdf', 'html', 'odt'];
+      if (ext === 'eml') return ['pdf', 'docx', 'html', 'txt', 'md', 'odt', 'rtf', 'attach'];
+      if (ext === 'odp') return ['pdf', 'docx', 'txt', 'md', 'html', 'odt'];
       if (canon(ext) === 'djvu') return ['pdf', 'spdf', 'png', 'jpg', 'docx', 'txt', 'md', 'html', 'epub', 'fb2'];
       // слайды рисуются в браузере; на компьютере владельца с Office — ещё и точно через PowerPoint/Word
       if (canon(ext) === 'pptx') return ['pdf', 'jpg', 'docx', 'txt', 'md', 'html'];
       if (canon(ext) === 'ppt') return ['pdf', ...(pcFeatures && officeAvailable ? ['pptx', 'jpg'] : []), 'docx', 'txt', 'md', 'html'];
-      if (canon(ext) === 'doc') return ['pdf', 'docx', 'gost', ...(pcFeatures && officeAvailable ? ['rtf', 'odt'] : []), 'txt', 'html', 'md', 'epub', 'fb2'];
+      if (canon(ext) === 'doc') return ['pdf', 'docx', 'gost', 'rtf', 'odt', 'txt', 'html', 'md', 'epub', 'fb2'];
       // «DOCX по ГОСТ» — для документов, которые сдают как отчёт (не для книг)
-      return not(['pdf', 'docx', ...(['epub', 'fb2', 'mobi'].includes(canon(ext)) ? [] : ['gost']), 'png', 'jpg', 'epub', 'fb2', 'html', 'md', 'txt']);
+      return not(['pdf', 'docx', ...(['epub', 'fb2', 'mobi'].includes(canon(ext)) ? [] : ['gost']), 'odt', 'rtf', 'png', 'jpg', 'epub', 'fb2', 'html', 'md', 'txt']);
     case 'media':
       if (VIDEO_EXT.includes(ext)) return not([...(recordable(MP4_TYPES) ? ['mp4'] : []), 'webm', 'gif', 'mp3', 'wav', 'frames']);
       return not(['mp3', 'wav']);
@@ -124,6 +128,7 @@ const TARGET_LABELS = {
   frames: 'Кадры JPG (ZIP)',
   spdf: 'PDF с поиском (распознать текст)',
   gost: 'DOCX по ГОСТ (поля, шрифт 14, интервал 1,5)',
+  attach: 'Вложения письма (ZIP)',
 };
 const targetLabel = (t) => TARGET_LABELS[t] || t.toUpperCase();
 
@@ -139,6 +144,9 @@ const MIME = {
   mp3: 'audio/mpeg', wav: 'audio/wav', webm: 'video/webm',
   dwg: 'image/vnd.dwg', dxf: 'image/vnd.dxf', cdw: 'application/octet-stream', svg: 'image/svg+xml',
   step: 'model/step', stl: 'model/stl', igs: 'model/iges',
+  odt: 'application/vnd.oasis.opendocument.text', rtf: 'application/rtf',
+  ods: 'application/vnd.oasis.opendocument.spreadsheet', xls: 'application/vnd.ms-excel',
+  srt: 'application/x-subrip;charset=utf-8', vtt: 'text/vtt;charset=utf-8',
 };
 
 const extOf = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
@@ -674,7 +682,11 @@ function parseXML(text) {
 async function parseData(file, ext) {
   if (['xlsx', 'xls', 'ods'].includes(ext)) {
     await loadLib('xlsx');
-    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true, dateNF: 'dd.mm.yyyy' });
+    const buf = await file.arrayBuffer();
+    // XLSX и ODS — это ZIP-архивы: без подписи «PK» файл повреждён или переименован из другого формата
+    const h = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+    if (ext !== 'xls' && !(h[0] === 0x50 && h[1] === 0x4B)) throw new Error(`Файл повреждён или это не настоящая таблица ${ext.toUpperCase()}.`);
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true, dateNF: 'dd.mm.yyyy' });
     const sheets = wb.SheetNames.map((name) => ({
       name,
       rows: XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '', raw: false, dateNF: 'dd.mm.yyyy' }),
@@ -795,6 +807,9 @@ async function convertData(file, ext, target) {
     } catch (e) { console.warn('Вёрстка XLSX не удалась, делаю простую таблицу:', e); }
   }
 
+  // большие таблицы → PDF напрямую (тысячи строк универсальная вёрстка собирает минутами)
+  if (target === 'pdf' && ext !== 'xml' && list.reduce((n, sh) => n + sh.rows.length, 0) > 1500) return tableToPdfFast(list, title);
+
   // Таблицы, JSON, XML → PDF / Word
   if (target === 'pdf' || target === 'docx') {
     let html, wide = 0;
@@ -835,14 +850,16 @@ async function convertData(file, ext, target) {
     case 'md':
       text = list.map((s) => (many ? `## ${s.name}\n\n` : '') + mdTable(s.rows)).join('\n');
       break;
-    case 'xlsx': {
+    case 'xlsx': case 'ods': case 'xls': {
+      // Excel/OpenDocument → другая таблица: книга целиком (формулы, объединения, листы)
+      if (['xlsx', 'xls', 'ods'].includes(ext)) return spreadsheetToSpreadsheet(file, target);
       await loadLib('xlsx');
       const wb = XLSX.utils.book_new();
       for (const s of sheets) {
         const name = s.name.replace(/[\\/?*[\]:]/g, '_').slice(0, 31) || 'Лист';
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(s.rows, { header: columnsOf(s.rows) }), name);
       }
-      return new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: MIME.xlsx });
+      return new Blob([XLSX.write(wb, { type: 'array', bookType: target === 'xls' ? 'biff8' : target })], { type: MIME[target] });
     }
   }
   return new Blob([text], { type: MIME[target] });
@@ -2331,6 +2348,9 @@ async function docToHtml(file, ext, onProgress, onStatus) {
     case 'mobi': return mobiToHtml(file);
     case 'rtf': return rtfToHtml(new TextDecoder('latin1').decode(new Uint8Array(await file.arrayBuffer())));
     case 'odt': return odtToHtml(file);
+    case 'odp': return odpToHtml(file);
+    case 'srt': case 'vtt': return subtitlesToHtml(file);
+    case 'eml': return emlToHtml(file);
     case 'pptx': return pptxToHtml(file, onStatus);
     case 'doc': case 'ppt': return legacyOfficeToHtml(file, ext, onProgress, onStatus);
   }
@@ -2817,6 +2837,8 @@ async function convertDoc(file, ext, target, opts, onProgress, onStatus, htmlOve
   const c = canon(ext);
   const title = baseOf(file.name);
   if ((c === 'pdf' || c === 'djvu') && (target === 'png' || target === 'jpg')) return pagesToImages(file, c, target, opts, onProgress, onStatus);
+  if ((c === 'srt' || c === 'vtt') && (target === 'srt' || target === 'vtt')) return convertSubtitles(file, target);
+  if (c === 'eml' && target === 'attach') return emlAttachments(file);
   if (c === 'pdf' && target === 'xlsx') return pdfToXlsx(file, onProgress, onStatus);
   if (c === 'djvu' && target === 'pdf' && !htmlOverride) return pagesToPdf(file, c, opts, onProgress, onStatus);
   // DOCX → PDF/картинки: вёрстка прямо по разметке Word (поля, отступы, таблицы, шрифты как в документе)
@@ -2843,6 +2865,8 @@ async function convertDoc(file, ext, target, opts, onProgress, onStatus, htmlOve
     return { blob: await docxToGost(docxBlob), ext: 'docx', suffix: ' (ГОСТ)', note: 'поля 30/15/20/20, Times New Roman 14, интервал 1,5' };
   }
 
+  // большой простой текст → PDF напрямую (универсальная вёрстка на таком объёме работает минутами)
+  if (c === 'txt' && target === 'pdf' && !htmlOverride && file.size > 150 * 1024) return textToPdfFast(await readText(file), title, onStatus);
   // htmlOverride — текст, отредактированный пользователем в конвертере
   let html = htmlOverride ?? await docToHtml(file, ext, onProgress, onStatus);
   // формулы: в HTML остаются настоящими (MathML), в TXT/Markdown — линейной записью, в остальных — картинками
@@ -2884,9 +2908,11 @@ async function convertDoc(file, ext, target, opts, onProgress, onStatus, htmlOve
     case 'pdf':
       onStatus('Создание PDF…');
       // слайды старого PowerPoint — на альбомных листах
-      if (c === 'ppt') return htmlToPdfText(html, title, { landscape: true }).catch(() => htmlToPdf(html, title));
+      if (c === 'ppt' || c === 'odp') return htmlToPdfText(html, title, { landscape: true }).catch(() => htmlToPdf(html, title));
       return htmlToPdf(html, title);
     case 'docx': return htmlToDocx(html);
+    case 'odt': return htmlToOdt(html);
+    case 'rtf': return htmlToRtf(html);
     case 'epub': return htmlToEpub(html, title);
     case 'fb2': return new Blob([await htmlToFb2(html, title)], { type: MIME.fb2 });
   }
@@ -3198,7 +3224,7 @@ async function serverPost(path, file) {
 // Что Office (Word/PowerPoint) на компьютере владельца делает точнее браузера
 const OFFICE_EXACT = { doc: ['pdf', 'docx', 'rtf', 'odt', 'txt'], ppt: ['pdf', 'pptx', 'jpg'], pptx: ['pdf', 'jpg'], docx: ['pdf'], rtf: ['pdf'], odt: ['pdf'] };
 // Что умеет браузер сам — запасной путь, если Office занят, задал вопрос или не установлен
-const BROWSER_OK = { doc: ['pdf', 'docx', 'txt'], ppt: ['pdf'], pptx: ['pdf', 'jpg'], docx: ['pdf'], rtf: ['pdf'], odt: ['pdf'] };
+const BROWSER_OK = { doc: ['pdf', 'docx', 'txt', 'rtf', 'odt'], ppt: ['pdf'], pptx: ['pdf', 'jpg'], docx: ['pdf'], rtf: ['pdf'], odt: ['pdf'] };
 // Word/PowerPoint ждёт ответа на вопрос на экране — полчаса не обращаемся к этой программе,
 // чтобы не ждать каждый раз (запоминается и после перезагрузки страницы)
 const officeApp = (c) => (['ppt', 'pptx'].includes(c) ? 'powerpoint' : 'word');
@@ -3573,7 +3599,27 @@ function setProgress(item, p) {
 }
 
 /** Любой поддерживаемый файл → нужный формат без строки в списке (для инструментов: «Всё в один PDF» и др.) */
+/** Понятное сообщение об ошибке вместо технического текста библиотек */
+function friendlyError(e, ext) {
+  const msg = e && e.message ? e.message : String(e || '');
+  const E = String(ext || '').toUpperCase();
+  if (/zero bytes|is empty|пустой/i.test(msg)) return 'Файл пустой (0 байт).';
+  if (/password|encrypt/i.test(msg) && !/[а-яё]/i.test(msg)) return 'Файл защищён паролем — сначала снимите защиту.';
+  if (/central directory|corrupted zip|is this a zip|zip file|end of data reached|invalid (zip|signature)/i.test(msg)) return `Файл повреждён или это не настоящий ${E} (внутренний архив не читается).`;
+  if (/Invalid PDF|InvalidPDFException|Missing PDF|PDF header/i.test(msg)) return 'Файл повреждён или это не PDF.';
+  if (/JSON/i.test(msg) && /Unexpected|position|end of/i.test(msg)) return 'В JSON ошибка: файл оборван или нарушена структура (скобки, запятые, кавычки).';
+  if (/out of memory|allocation failed|Array buffer allocation|Invalid array length|Maximum call stack/i.test(msg)) return 'Не хватило памяти браузера: файл слишком большой для этого устройства. Попробуйте на компьютере.';
+  if (msg && !/[а-яё]/i.test(msg)) return `Не удалось прочитать файл: он повреждён или эта разновидность ${E} не поддерживается. (${msg.slice(0, 120)})`;
+  return msg || 'Неизвестная ошибка.';
+}
+
 async function convertFileTo(file, target, onStatus = () => {}) {
+  if (!file.size) throw new Error('Файл пустой (0 байт).');
+  try { return await convertFileToRaw(file, target, onStatus); }
+  catch (e) { throw new Error(friendlyError(e, extOf(file.name))); }
+}
+
+async function convertFileToRaw(file, target, onStatus = () => {}) {
   const item = { file, path: '', depth: 0, status: 'idle' };
   await identify(item);
   if (!item.cat || item.cat === 'archive' || !item.targets.includes(target)) {
@@ -3596,6 +3642,7 @@ async function convertFileTo(file, target, onStatus = () => {}) {
 
 async function convertItem(item) {
   if (!item.cat || !item.target || item.status === 'work' || item.cat === 'archive') return;
+  if (!item.file.size) { item.status = 'error'; item.error = 'Файл пустой (0 байт).'; refreshRow(item); updateToolbar(); return; }
   item.status = 'work';
   item.workText = (item.target === 'webm' || item.target === 'mp4') ? 'Запись видео в реальном времени — не закрывайте вкладку…' : 'Конвертация…';
   refreshRow(item);
@@ -3634,7 +3681,7 @@ async function convertItem(item) {
   } catch (e) {
     console.error(e);
     item.status = 'error';
-    item.error = e && e.message ? e.message : String(e);
+    item.error = friendlyError(e, item.ext);
   }
   refreshRow(item);
   updateToolbar();
