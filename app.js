@@ -3898,8 +3898,9 @@ if ('launchQueue' in window) {
 
 let deferredInstall = null;
 function updateInstallButton() {
-  // Кнопка есть, если браузер умеет ставить сам, а на iPhone/по сети — с инструкцией
-  $('installBtn').hidden = isStandalone() || location.protocol === 'file:' || !(deferredInstall || isIOS || !window.isSecureContext);
+  // Кнопка видна всем, кто открыл сайт в браузере: где можно — ставит сразу, иначе показывает инструкцию.
+  // Скрыта, только если приложение уже установлено и открыто как приложение.
+  $('installBtn').hidden = isStandalone() || location.protocol === 'file:';
 }
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall = e; updateInstallButton(); });
 window.addEventListener('appinstalled', () => { deferredInstall = null; updateInstallButton(); });
@@ -3929,9 +3930,28 @@ function installHelpHtml() {
       <li>Выберите <b>«Добавить на главный экран»</b> (или «Установить приложение»).</li>
       <li>Подтвердите — значок BullConvert появится на рабочем столе телефона.</li></ol>`;
   }
+  const ua = navigator.userAgent;
+  if (/Firefox\//.test(ua)) {
+    return `<p>Firefox на компьютере не умеет устанавливать сайты как приложения.</p>
+      <ol class="steps"><li>Откройте эту страницу в <b>Google Chrome</b>, <b>Microsoft Edge</b> или <b>Яндекс Браузере</b>.</li>
+      <li>Нажмите кнопку <b>«Установить приложение»</b> вверху страницы.</li></ol>
+      <p class="muted">Пользоваться сайтом в Firefox можно и без установки — всё работает так же.</p>`;
+  }
+  if (/Safari\//.test(ua) && !/Chrome|Chromium|Edg\//.test(ua)) {
+    return `<ol class="steps"><li>В Safari откройте меню <b>«Файл»</b>.</li>
+      <li>Выберите <b>«Добавить в Dock»</b> → <b>«Добавить»</b>.</li></ol>`;
+  }
   return `<ol class="steps"><li>В Chrome или Edge откройте меню <span class="kbd">⋮</span> / <span class="kbd">…</span>.</li>
     <li>Выберите <b>«Установить BullConvert»</b> (в Edge: «Приложения → Установить этот сайт как приложение»).</li></ol>`;
 }
+
+/** Что даёт установка — одинаково для всех устройств */
+const INSTALL_INFO = `<ul class="muted">
+  <li>Значок BullConvert с быком на рабочем столе или экране телефона — открывается отдельным окном, без вкладок браузера.</li>
+  <li>Файлы по-прежнему обрабатываются только на вашем устройстве и никуда не загружаются.</li>
+  <li>Работа без интернета: после установки откройте «Настройки» и нажмите «Подготовить к работе без интернета».</li>
+  <li>На компьютере файлы можно открывать через «Открыть с помощью → BullConvert».</li>
+</ul>`;
 
 $('installBtn').onclick = async () => {
   if (deferredInstall) {
@@ -3941,7 +3961,7 @@ $('installBtn').onclick = async () => {
     updateInstallButton();
     return;
   }
-  openDialog('Установить BullConvert', installHelpHtml());
+  openDialog('Установить BullConvert', installHelpHtml() + '<h3>Что даёт установка</h3>' + INSTALL_INFO);
 };
 
 async function qrSvg(text) {
