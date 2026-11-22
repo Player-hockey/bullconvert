@@ -112,16 +112,18 @@
       <h2>Защита данных</h2>
       <p>Файлы конвертируются <b>прямо на вашем устройстве</b> — в браузере. Они не загружаются на сервер, их никто не видит и не хранит. Сайт не требует регистрации, не использует рекламу и cookie; посещения считаются только в обезличенном виде, без имён файлов и IP-адресов.</p>
       <p>История конвертаций, настройки и сохранённая подпись хранятся только в вашем браузере — их можно удалить в любой момент.</p>
-      <p><a href="privacy.html">Политика конфиденциальности</a></p>
+      <p><a href="privacy.html">Политика конфиденциальности</a> · <a href="consent.html">Согласие на обработку персональных данных</a></p>
     </section>
   </main>
 
   <dialog id="consentDlg" class="dlg consent-dlg">
-    <h2>Политика конфиденциальности</h2>
-    <p>BullConvert обрабатывает файлы на вашем устройстве — они никуда не загружаются. Для использования приложения необходимо принять
-      <a href="privacy.html" target="_blank" rel="noopener">Политику конфиденциальности</a> и дать
-      <a href="privacy.html#consent" target="_blank" rel="noopener">согласие на обработку персональных данных</a>.</p>
-    <label class="chk consent-chk"><input type="checkbox" id="consentChk"><span>Я ознакомлен(а) с Политикой конфиденциальности и даю согласие на обработку персональных данных</span></label>
+    <h2>Согласие на обработку данных</h2>
+    <p>BullConvert обрабатывает файлы на вашем устройстве — они никуда не загружаются. Для использования приложения необходимо ознакомиться с
+      <a href="privacy.html" target="_blank" rel="noopener">Политикой конфиденциальности</a> и дать
+      <a href="consent.html" target="_blank" rel="noopener">Согласие на обработку персональных данных</a>.</p>
+    <label class="chk consent-chk"><input type="checkbox" id="policyChk"><span>Я ознакомлен(а) с <a href="privacy.html" target="_blank" rel="noopener">Политикой конфиденциальности</a></span></label>
+    <label class="chk consent-chk"><input type="checkbox" id="consentChk"><span>Я даю согласие на обработку персональных данных на условиях <a href="consent.html" target="_blank" rel="noopener">Согласия</a></span></label>
+    <p class="muted small">Текст согласия, дата его получения и кнопка отзыва всегда доступны внизу страницы — ссылка «Согласие на обработку персональных данных».</p>
     <div class="tool-actions">
       <button class="btn ghost" id="consentNo">Отказаться</button>
       <button class="btn primary" id="consentYes" disabled>Принять</button>

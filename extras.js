@@ -511,22 +511,26 @@ async function translateItem(item) {
 /* ------------------------------ Согласие с Политикой конфиденциальности ------------------------------ */
 
 // редакция Политики: при её изменении согласие запрашивается заново
-const CONSENT_VERSION = '2026-11-20.2'; // ред. 2: подсчёт посещений
+const CONSENT_VERSION = '2026-11-22.3'; // ред. 3: Согласие — отдельный документ (consent.html)
+const CONSENT_DOC = 'редакция 1 от 22 ноября 2026 г.';
 function hasConsent() {
   try { const c = JSON.parse(localStorage.getItem('bcConsent') || 'null'); return !!c && c.v === CONSENT_VERSION; } catch { return false; }
 }
 (() => {
   const dlg = $('consentDlg');
   if (!dlg || hasConsent() || TEST_MODE) return;
-  const chk = $('consentChk'), yes = $('consentYes');
-  chk.onchange = () => { yes.disabled = !chk.checked; };
+  const chk = $('consentChk'), pol = $('policyChk'), yes = $('consentYes');
+  pol.onchange = chk.onchange = () => { yes.disabled = !(chk.checked && pol.checked); };
   // без согласия окно не закрывается (в том числе клавишей Esc)
   dlg.addEventListener('cancel', (e) => e.preventDefault());
   dlg.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.preventDefault(); });
   // браузер всё же закрыл окно (Esc, жест «назад») — открываем снова, пока нет согласия
   dlg.addEventListener('close', () => { if (!hasConsent()) setTimeout(() => { if (!dlg.open) dlg.showModal(); }, 0); });
   yes.onclick = () => {
-    try { localStorage.setItem('bcConsent', JSON.stringify({ v: CONSENT_VERSION, at: new Date().toISOString() })); } catch { /* приватный режим: согласие действует до закрытия вкладки */ }
+    // отметка о согласии: показывается на странице consent.html («Ваше согласие»)
+    const id = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)).toUpperCase();
+    const text = '«Я ознакомлен(а) с Политикой конфиденциальности»; «Я даю согласие на обработку персональных данных на условиях Согласия»';
+    try { localStorage.setItem('bcConsent', JSON.stringify({ v: CONSENT_VERSION, at: new Date().toISOString(), id, doc: CONSENT_DOC, text })); } catch { /* приватный режим: согласие действует до закрытия вкладки */ }
     dlg.close();
     if (typeof statsStart === 'function') statsStart();
   };
