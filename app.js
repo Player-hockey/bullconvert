@@ -73,15 +73,16 @@ const VIDEO_EXT = ['mp4', 'webm', 'mov', 'mkv'];
 const ARCHIVES = ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz'];
 
 const CATEGORIES = {
-  image:   { label: 'Фото',    in: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'ico', 'svg', 'avif', 'heic', 'heif', 'tif', 'tiff'] },
-  data:    { label: 'Данные',  in: ['csv', 'tsv', 'json', 'xlsx', 'xls', 'ods', 'xml', 'yaml', 'yml'] },
-  doc:     { label: 'Док',     in: ['txt', 'md', 'markdown', 'html', 'htm', 'docx', 'doc', 'dot', 'rtf', 'odt', 'pptx', 'ppsx', 'ppt', 'pps', 'pdf', 'djvu', 'djv', 'epub', 'fb2', 'mobi', 'azw', 'azw3', 'prc', 'odp', 'srt', 'vtt', 'eml'] },
+  image:   { label: 'Фото',    in: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'ico', 'svg', 'avif', 'heic', 'heif', 'tif', 'tiff', 'psd', 'tga'] },
+  data:    { label: 'Данные',  in: ['csv', 'tsv', 'json', 'xlsx', 'xls', 'ods', 'xml', 'yaml', 'yml', 'vcf', 'ics', 'ndjson', 'jsonl'] },
+  doc:     { label: 'Док',     in: ['txt', 'md', 'markdown', 'html', 'htm', 'docx', 'doc', 'dot', 'rtf', 'odt', 'pptx', 'ppsx', 'ppt', 'pps', 'pdf', 'djvu', 'djv', 'epub', 'fb2', 'mobi', 'azw', 'azw3', 'prc', 'odp', 'srt', 'vtt', 'ass', 'ssa', 'eml'] },
   media:   { label: 'Медиа',   in: ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'webm', 'mp4', 'mov', 'mkv'] },
   cad:     { label: 'CAD',     in: [...CAD_2D, ...CAD_SPEC, ...CAD_ACAD, ...CAD_3D] },
   archive: { label: 'Архив',   in: ARCHIVES },
+  font:    { label: 'Шрифт',   in: ['ttf', 'otf', 'woff', 'woff2'] },
 };
 
-const SAME = { jpeg: 'jpg', yml: 'yaml', htm: 'html', markdown: 'md', oga: 'ogg', djv: 'djvu', heif: 'heic', azw: 'mobi', azw3: 'mobi', prc: 'mobi', tif: 'tiff', dot: 'doc', pps: 'ppt', ppsx: 'pptx' };
+const SAME = { jpeg: 'jpg', yml: 'yaml', htm: 'html', markdown: 'md', oga: 'ogg', djv: 'djvu', heif: 'heic', azw: 'mobi', azw3: 'mobi', prc: 'mobi', tif: 'tiff', dot: 'doc', pps: 'ppt', ppsx: 'pptx', jsonl: 'ndjson', ssa: 'ass', vcard: 'vcf' };
 const canon = (e) => SAME[e] || e;
 
 // Запись MP4 умеют Chrome/Edge (новые версии) и Safari; иначе предлагаем WEBM
@@ -93,15 +94,20 @@ function targetsFor(cat, ext) {
   const not = (list) => list.filter((t) => t !== canon(ext));
   switch (cat) {
     // txt/docx у фото — распознавание текста со снимка
-    case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'spdf', 'nobg', 'gif', 'tiff', 'bmp', 'ico', 'txt', 'docx', 'xlsx']);
-    case 'data':  return not(['pdf', 'xlsx', 'ods', 'xls', 'docx', 'csv', 'tsv', 'json', 'yaml', 'xml', 'html', 'md']);
+    case 'image': return not(['png', 'jpg', 'webp', 'pdf', 'spdf', 'nobg', 'gif', 'tiff', 'bmp', 'ico', 'pptx', 'txt', 'docx', 'xlsx']);
+    case 'data':
+      // контакты и календарь — в таблицы и документы, а таблицы — обратно в контакты/календарь
+      if (canon(ext) === 'vcf' || ext === 'ics') return ['csv', 'xlsx', 'pdf', 'docx', 'json', 'html', 'md', 'ods'];
+      return not(['pdf', 'xlsx', 'ods', 'xls', 'docx', 'csv', 'tsv', 'json', 'ndjson', 'yaml', 'xml', 'html', 'md', 'sql', 'vcf', 'ics']);
+    case 'font': return ext === 'woff' ? ['ttf', 'pdf', 'png'] : ext === 'woff2' ? [] : ['woff', 'pdf', 'png'];
     case 'doc':
-      if (ext === 'pdf') return ['docx', 'gost', 'spdf', 'xlsx', 'odt', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
+      if (ext === 'pdf') return ['docx', 'gost', 'spdf', 'xlsx', 'pptx', 'odt', 'txt', 'md', 'html', 'epub', 'fb2', 'png', 'jpg'];
       // субтитры: друг в друга и в документ (расшифровка с временем)
       if (ext === 'srt' || ext === 'vtt') return [ext === 'srt' ? 'vtt' : 'srt', 'txt', 'docx', 'pdf', 'html', 'odt'];
+      if (canon(ext) === 'ass') return ['srt', 'vtt', 'txt', 'docx', 'pdf', 'html', 'odt'];
       if (ext === 'eml') return ['pdf', 'docx', 'html', 'txt', 'md', 'odt', 'rtf', 'attach'];
       if (ext === 'odp') return ['pdf', 'docx', 'txt', 'md', 'html', 'odt'];
-      if (canon(ext) === 'djvu') return ['pdf', 'spdf', 'png', 'jpg', 'docx', 'txt', 'md', 'html', 'epub', 'fb2'];
+      if (canon(ext) === 'djvu') return ['pdf', 'spdf', 'pptx', 'png', 'jpg', 'docx', 'txt', 'md', 'html', 'epub', 'fb2'];
       // слайды рисуются в браузере; на компьютере владельца с Office — ещё и точно через PowerPoint/Word
       if (canon(ext) === 'pptx') return ['pdf', 'jpg', 'docx', 'txt', 'md', 'html'];
       if (canon(ext) === 'ppt') return ['pdf', ...(pcFeatures && officeAvailable ? ['pptx', 'jpg'] : []), 'docx', 'txt', 'md', 'html'];
@@ -147,6 +153,10 @@ const MIME = {
   odt: 'application/vnd.oasis.opendocument.text', rtf: 'application/rtf',
   ods: 'application/vnd.oasis.opendocument.spreadsheet', xls: 'application/vnd.ms-excel',
   srt: 'application/x-subrip;charset=utf-8', vtt: 'text/vtt;charset=utf-8',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  sql: 'application/sql;charset=utf-8', ndjson: 'application/x-ndjson;charset=utf-8',
+  vcf: 'text/vcard;charset=utf-8', ics: 'text/calendar;charset=utf-8',
+  woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf',
 };
 
 const extOf = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
@@ -162,7 +172,7 @@ const TEST_MODE = ['localhost', '127.0.0.1', 'bullconvert.localhost'].includes(l
 const catOf = (ext) => {
   const c = Object.keys(CATEGORIES).find((k) => CATEGORIES[k].in.includes(ext)) || null;
   // DXF рисуется прямо в браузере — доступен везде; остальные чертежи — только с КОМПАС на компьютере владельца
-  if (!pcFeatures && ((c === 'cad' && ext !== 'dxf') || (c === 'archive' && ext !== 'zip'))) return null;
+  if (!pcFeatures && ((c === 'cad' && ext !== 'dxf') || (c === 'archive' && !['zip', 'tar', 'gz', 'tgz'].includes(ext)))) return null;
   return c;
 };
 
@@ -349,6 +359,8 @@ async function tiffCanvases(file, maxPages = 5000) {
 }
 
 async function imageSource(file, ext) {
+  if (ext === 'psd') return canvasToBlob(await psdToCanvas(file), 'image/png');
+  if (ext === 'tga') return canvasToBlob(await tgaToCanvas(file), 'image/png');
   if (ext === 'tiff' || ext === 'tif') {
     const [c] = await tiffCanvases(file, 1);
     return canvasToBlob(c, 'image/png');
@@ -383,6 +395,15 @@ async function loadImage(blob) {
 }
 
 async function convertImage(file, ext, target, opts, onProgress = () => {}, onStatus = () => {}) {
+  if (target === 'pptx') {
+    // каждая страница (у TIFF их может быть много) — отдельный слайд
+    const canv = ext === 'tiff' ? await tiffCanvases(file) : [await (async () => { const { img, url } = await loadImage(await imageSource(file, ext));
+      const c = document.createElement('canvas'); c.width = img.naturalWidth || 1024; c.height = img.naturalHeight || 768;
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0); URL.revokeObjectURL(url); return c; })()];
+    const slides = [];
+    for (const c of canv) slides.push({ blob: await canvasToBlob(c, 'image/jpeg', Math.max(0.8, opts.quality || 0.9)), w: c.width, h: c.height });
+    return { blob: await imagesToPptx(slides), ext: 'pptx' };
+  }
   // многостраничный TIFF → PDF: все страницы
   if (ext === 'tiff' && target === 'pdf') {
     onStatus('Чтение страниц TIFF…');
@@ -719,6 +740,9 @@ async function parseFlatData(file, ext) {
     const rows = parseXML(text);
     return { rows, raw: rows };
   }
+  if (ext === 'vcf' || ext === 'vcard') { const rows = parseVcf(text); return { rows, raw: rows }; }
+  if (ext === 'ics') { const rows = parseIcs(text); return { rows, raw: rows }; }
+  if (ext === 'ndjson' || ext === 'jsonl') { const rows = parseNdjson(text); return { rows, raw: rows }; }
   throw new Error('Неизвестный формат данных.');
 }
 
@@ -829,6 +853,10 @@ async function convertData(file, ext, target) {
 
   switch (target) {
     case 'json': text = JSON.stringify(raw, null, 2); break;
+    case 'ndjson': text = list.flatMap((s) => s.rows).map((r) => JSON.stringify(r)).join('\n') + '\n'; break;
+    case 'sql': text = rowsToSql(list, title); break;
+    case 'vcf': text = rowsToVcf(list.flatMap((s) => s.rows)); break;
+    case 'ics': text = rowsToIcs(list.flatMap((s) => s.rows)); break;
     case 'yaml': await loadLib('yaml'); text = jsyaml.dump(raw, { lineWidth: -1 }); break;
     case 'csv': case 'tsv': {
       const make = (rows) => (target === 'csv' ? '﻿' + toDelimited(rows, ',') : toDelimited(rows, '\t'));
@@ -2297,9 +2325,20 @@ function htmlPage(title, body) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>
-body { max-width: 800px; margin: 40px auto; padding: 0 16px; font: 16px/1.6 system-ui, sans-serif; color: #222; }
-table { border-collapse: collapse; } td, th { border: 1px solid #ccc; padding: 4px 8px; } th { background: #f3f3f3; }
-img { max-width: 100%; } pre { background: #f5f5f5; padding: 10px; overflow: auto; }
+:root { --text: #1b1f24; --muted: #667085; --line: #e3e6eb; --head: #f1f4fb; --zebra: #fafbfd; --accent: #3b5bdb; --code: #f5f6f8; }
+@media (prefers-color-scheme: dark) { :root { --text: #e8eaee; --muted: #98a1b0; --line: #2f3540; --head: #1e2433; --zebra: #171a20; --accent: #6d8bff; --code: #1d2027; } body { background: #111317; } }
+body { max-width: 780px; margin: 48px auto; padding: 0 20px; font: 17px/1.7 Georgia, "Times New Roman", serif; color: var(--text); }
+h1, h2, h3, h4 { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.25; margin: 1.6em 0 .5em; }
+h1 { font-size: 2em; letter-spacing: -.01em; margin-top: 0; } h2 { font-size: 1.45em; } h3 { font-size: 1.2em; }
+p { margin: 0 0 .9em; } a { color: var(--accent); }
+table { border-collapse: collapse; margin: 1em 0 1.4em; font: 15px/1.45 system-ui, sans-serif; width: auto; max-width: 100%; }
+td, th { border: 1px solid var(--line); padding: 6px 10px; vertical-align: top; }
+th { background: var(--head); font-weight: 600; text-align: left; } tr:nth-child(even) td { background: var(--zebra); }
+img { max-width: 100%; height: auto; border-radius: 4px; }
+pre, code { font-family: Consolas, "Courier New", monospace; font-size: .9em; background: var(--code); border-radius: 6px; }
+pre { padding: 12px 14px; overflow: auto; } code { padding: 1px 4px; } pre code { padding: 0; }
+blockquote { margin: 1em 0; padding: .2em 1em; border-left: 3px solid var(--accent); color: var(--muted); }
+hr { border: none; border-top: 1px solid var(--line); margin: 2em 0; }
 </style>
 </head>
 <body>
@@ -2349,7 +2388,7 @@ async function docToHtml(file, ext, onProgress, onStatus) {
     case 'rtf': return rtfToHtml(new TextDecoder('latin1').decode(new Uint8Array(await file.arrayBuffer())));
     case 'odt': return odtToHtml(file);
     case 'odp': return odpToHtml(file);
-    case 'srt': case 'vtt': return subtitlesToHtml(file);
+    case 'srt': case 'vtt': case 'ass': return subtitlesToHtml(file);
     case 'eml': return emlToHtml(file);
     case 'pptx': return pptxToHtml(file, onStatus);
     case 'doc': case 'ppt': return legacyOfficeToHtml(file, ext, onProgress, onStatus);
@@ -2404,7 +2443,15 @@ async function htmlToPdfText(html, title, opt = {}) {
       try { const im = await imageFromUrl(img.getAttribute('src')); img.setAttribute('width', String(Math.round(im.naturalWidth * 0.75))); img.setAttribute('height', String(Math.round(im.naturalHeight * 0.75))); } catch { /* размер неизвестен */ }
     } catch { img.remove(); }
   }
-  const content = htmlToPdfmake(root.innerHTML, { window });
+  // оформление: иерархия заголовков, шапка таблиц, ссылки
+  const content = htmlToPdfmake(root.innerHTML, { window, defaultStyles: {
+    h1: { fontSize: 20, bold: true, color: '#1f2a44', marginBottom: 8, marginTop: 4 },
+    h2: { fontSize: 16, bold: true, color: '#1f2a44', marginBottom: 6, marginTop: 10 },
+    h3: { fontSize: 13.5, bold: true, color: '#2b3550', marginBottom: 5, marginTop: 8 },
+    h4: { fontSize: 12, bold: true, marginBottom: 4, marginTop: 6 },
+    th: { bold: true, fillColor: '#eef1f8' }, a: { color: '#3b5bdb', decoration: 'underline' },
+    p: { margin: [0, 0, 0, 6] }, blockquote: { italics: true, color: '#555' },
+  } });
   // класс pdf-pagebreak-before (html-to-pdfmake кладёт классы в style) → разрыв страницы pdfmake
   const breaks = (n) => {
     if (Array.isArray(n)) { n.forEach(breaks); return; }
@@ -2422,7 +2469,10 @@ async function htmlToPdfText(html, title, opt = {}) {
       delete n.width; delete n.height;
       n.fit = w > 0 && h > 0 ? [Math.min(box[0], w), Math.min(box[1], h)] : box;
     }
-    if (n.table) n.table.headerRows = n.table.body && n.table.body.length > 1 ? 1 : 0; // шапка таблицы на каждой странице
+    if (n.table) {
+      n.table.headerRows = n.table.body && n.table.body.length > 1 ? 1 : 0; // шапка таблицы на каждой странице
+      if (!n.layout) n.layout = 'bcLight'; // светлая аккуратная сетка
+    }
     for (const v of Object.values(n)) if (v && typeof v === 'object') fit(v);
   };
   fit(content);
@@ -2430,14 +2480,20 @@ async function htmlToPdfText(html, title, opt = {}) {
     info: { title },
     pageSize: 'A4',
     pageOrientation: opt.landscape ? 'landscape' : 'portrait',
-    pageMargins: [40, 40, 40, 40],
+    pageMargins: [40, 40, 40, 44],
     content,
-    defaultStyle: { font: 'Roboto', fontSize: opt.fontSize || 11, lineHeight: 1.25 },
+    defaultStyle: { font: 'Roboto', fontSize: opt.fontSize || 11, lineHeight: 1.25, color: '#1b1f24' },
+    // номер страницы внизу — только если страниц больше одной
+    footer: (page, count) => (count > 1 ? { text: `${page} / ${count}`, alignment: 'center', fontSize: 8, color: '#98a1b0', margin: [0, 14, 0, 0] } : null),
   };
+  const layouts = { bcLight: {
+    hLineWidth: () => 0.5, vLineWidth: () => 0.5, hLineColor: () => '#c9ced8', vLineColor: () => '#c9ced8',
+    paddingLeft: () => 5, paddingRight: () => 5, paddingTop: () => 3, paddingBottom: () => 3,
+  } };
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('pdfmake timeout')), Math.max(120000, layoutTimeout(JSON.stringify(content).length)));
     try {
-      pdfMake.createPdf(dd).getBlob((b) => { clearTimeout(timer); resolve(b); });
+      pdfMake.createPdf(dd, layouts).getBlob((b) => { clearTimeout(timer); resolve(b); });
     } catch (e) { clearTimeout(timer); reject(e); }
   });
 }
@@ -2837,7 +2893,8 @@ async function convertDoc(file, ext, target, opts, onProgress, onStatus, htmlOve
   const c = canon(ext);
   const title = baseOf(file.name);
   if ((c === 'pdf' || c === 'djvu') && (target === 'png' || target === 'jpg')) return pagesToImages(file, c, target, opts, onProgress, onStatus);
-  if ((c === 'srt' || c === 'vtt') && (target === 'srt' || target === 'vtt')) return convertSubtitles(file, target);
+  if ((c === 'srt' || c === 'vtt' || c === 'ass') && (target === 'srt' || target === 'vtt')) return convertSubtitles(file, target);
+  if ((c === 'pdf' || c === 'djvu') && target === 'pptx') return pagesToPptx(file, c, opts, onProgress, onStatus);
   if (c === 'eml' && target === 'attach') return emlAttachments(file);
   if (c === 'pdf' && target === 'xlsx') return pdfToXlsx(file, onProgress, onStatus);
   if (c === 'djvu' && target === 'pdf' && !htmlOverride) return pagesToPdf(file, c, opts, onProgress, onStatus);
@@ -3330,6 +3387,8 @@ async function extractArchive(file, ext) {
     try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
     catch { return new TextDecoder('ibm866').decode(bytes); }
   };
+  // TAR, GZ, TGZ распаковываются прямо в браузере
+  if (['tar', 'gz', 'tgz'].includes(ext)) return extractTarGz(file, ext);
   const data = ext === 'zip' ? file : (await serverPost(`/api/extract?from=${encodeURIComponent(ext)}`, file)).data;
   zip = await JSZip.loadAsync(data, { decodeFileName });
   const out = [];
@@ -3537,6 +3596,7 @@ function refreshRow(item) {
   const { badge, meta, progress, action, target } = item.el;
   badge.className = 'badge ' + (item.cat || '');
   badge.textContent = item.ext || '?';
+  item.el.li.dataset.status = item.status || 'idle'; // для оформления: готово / ошибка / в работе
   meta.className = 'meta';
   progress.hidden = item.status !== 'work';
   target.disabled = item.status === 'work' || !item.targets || !item.targets.length;
@@ -3635,6 +3695,7 @@ async function convertFileToRaw(file, target, onStatus = () => {}) {
     case 'data': res = await convertData(file, item.ext, target); break;
     case 'doc': res = await convertDocument(item, opts, onProgress, onStatus); break;
     case 'media': res = await convertMedia(file, item.ext, target, opts, onProgress, onStatus); break;
+    case 'font': res = await convertFont(file, item.ext, target, opts, onStatus); break;
     case 'cad': res = await convertDrawing(item, opts, onStatus); break;
   }
   return res instanceof Blob ? res : res.blob;
@@ -3670,6 +3731,7 @@ async function convertItem(item) {
       case 'data':  res = await convertData(file, ext, target); break;
       case 'doc': res = await convertDocument(item, opts, onProgress, onStatus); break;
       case 'media': res = await convertMedia(file, ext, target, opts, onProgress, onStatus); break;
+      case 'font': res = await convertFont(file, ext, target, opts, onStatus); break;
       case 'cad':   res = await convertDrawing(item, opts, onStatus); break;
     }
     const blob = res instanceof Blob ? res : res.blob;

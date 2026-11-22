@@ -318,3 +318,51 @@ body:not(.pc) .only-pc { display: none !important; }
 .consent-dlg::backdrop { background: rgba(0, 0, 0, .6); }
 .consent-chk { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0; line-height: 1.4; }
 .consent-chk input { margin-top: 3px; flex: none; }
+
+/* ===================== Отделка (раскладка не меняется) ===================== */
+:root { --font: #0b7285; --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .04); --shadow-lift: 0 6px 18px rgba(16, 24, 40, .08); }
+@media (prefers-color-scheme: dark) { :root { --font: #3bc9db; --shadow: 0 1px 2px rgba(0, 0, 0, .3); --shadow-lift: 0 8px 22px rgba(0, 0, 0, .35); } }
+.badge.font { background: var(--font); }
+
+body { background: radial-gradient(1200px 380px at 50% -120px, var(--accent-soft), transparent 70%) no-repeat, var(--bg); }
+::selection { background: var(--accent); color: var(--accent-text); }
+
+.drop, .settings, .row, .formats-grid > div { box-shadow: var(--shadow); }
+.drop-icon { transition: transform .25s ease; }
+.drop:hover .drop-icon, .drop.over .drop-icon { transform: translateY(-3px) scale(1.06); }
+.drop.over { border-style: solid; }
+
+.btn { transition: background-color .15s, border-color .15s, box-shadow .15s, transform .08s, filter .15s; }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn.primary:hover:not(:disabled), .btn.ok:hover:not(:disabled) { filter: brightness(1.07); box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:focus-visible, select:focus-visible, input:focus-visible, .drop:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+select { transition: border-color .15s; cursor: pointer; }
+select:hover:not(:disabled) { border-color: var(--accent); }
+
+/* строки файлов: появление и цветная метка состояния слева */
+.row { position: relative; transition: border-color .2s, box-shadow .2s, transform .2s; animation: rowIn .25s ease-out; }
+.row::before { content: ''; position: absolute; left: -1px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: transparent; transition: background .2s; }
+.row[data-status="work"]::before { background: var(--accent); }
+.row[data-status="done"]::before { background: var(--ok); }
+.row[data-status="error"]::before { background: var(--err); }
+.row[data-status="done"] { border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); }
+.row[data-status="error"] { border-color: color-mix(in srgb, var(--err) 35%, var(--border)); }
+.row:hover { box-shadow: var(--shadow-lift); }
+@keyframes rowIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.badge { box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .12); }
+
+.progress { height: 5px; border-radius: 3px; }
+.progress > i { border-radius: 3px; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #22b8cf)); }
+
+.formats-grid > div { transition: border-color .2s, box-shadow .2s, transform .2s; }
+.formats-grid > div:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: var(--shadow-lift); transform: translateY(-1px); }
+
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before { animation: none !important; transition: none !important; }
+}
+
+/* ссылки в тексте страницы — цвет акцента (в тёмной теме синий по умолчанию почти не виден) */
+main a:not(.btn) { color: var(--accent); }

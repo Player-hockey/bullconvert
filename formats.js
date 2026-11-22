@@ -228,6 +228,7 @@ const fmtSubTime = (t, sep) => {
 
 /** Разбор SRT и WebVTT: [{ start, end, text }] */
 function parseSubtitles(text) {
+  if (/^\s*\[script info\]/i.test(text.replace(/^\uFEFF/, '')) || /^\s*dialogue:/im.test(text)) return parseAss(text);
   const cues = [];
   const blocks = text.replace(/\r\n?/g, '\n').replace(/^\uFEFF/, '').split(/\n{2,}/);
   for (const blk of blocks) {
