@@ -118,8 +118,9 @@ function targetsFor(cat, ext) {
       if (VIDEO_EXT.includes(ext)) return not([...(recordable(MP4_TYPES) ? ['mp4'] : []), 'webm', 'gif', 'mp3', 'wav', 'frames']);
       return not(['mp3', 'wav']);
     case 'cad':
-      if (CAD_2D.includes(ext)) return ['pdf', 'dwg', 'dxf', 'png', 'jpg'];
-      if (CAD_SPEC.includes(ext)) return ['pdf'];
+      // КОМПАС сохраняет PDF, а Word и остальное BullConvert делает из него в браузере
+      if (CAD_2D.includes(ext)) return ['pdf', 'docx', 'dwg', 'dxf', 'png', 'jpg', 'odt', 'rtf', 'html'];
+      if (CAD_SPEC.includes(ext)) return ['pdf', 'docx', ...(ext === 'spw' ? ['xlsx'] : []), 'rtf', 'odt', 'txt', 'html', 'md', 'png', 'jpg'];
       if (ext === 'dwg') return ['pdf', 'dxf', 'cdw', 'png', 'jpg'];
       if (ext === 'dxf') return pcFeatures ? ['pdf', 'dwg', 'cdw', 'png', 'jpg', 'svg'] : ['pdf', 'svg', 'png', 'jpg'];
       if (CAD_3D.includes(ext)) return ['step', 'stl', 'igs', 'png', 'jpg', 'pdf'];
@@ -3332,6 +3333,18 @@ async function convertDrawing(item, opts, onStatus) {
   // КОМПАС уже не смог открыть этот файл — сразу рисуем в браузере (не ждём его повторно)
   const key = `${file.name}|${file.size}|${file.lastModified}`;
   if (inBrowser && (!pcFeatures || target === 'svg' || TEST_MODE || cadFailed.has(key))) return dxfConvert(file, target, opts, onStatus);
+  // KDW, SPW, FRW, CDW → Word и др.: КОМПАС сохраняет PDF, остальное делается из него в браузере
+  const direct = CAD_2D.includes(ext) ? ['pdf', 'dwg', 'dxf', 'png', 'jpg'] : ['pdf'];
+  if ([...CAD_2D, ...CAD_SPEC].includes(ext) && !direct.includes(target)) {
+    const r = await convertCad(item, onStatus, 'pdf');
+    const pdf = new File([r instanceof Blob ? r : r.blob], `${item.outBase || 'drawing'}.pdf`, { type: MIME.pdf });
+    const onProgress = item.el ? (p) => setProgress(item, p) : () => {};
+    const res = CAD_2D.includes(ext)
+      ? await drawingPdfToDoc(pdf, target, onProgress, onStatus) // чертёж: листы картинками, чтобы сохранить графику
+      : await convertDoc(pdf, 'pdf', target, opts, onProgress, onStatus); // текст и спецификация: редактируемый текст и таблицы
+    const warn = r instanceof Blob ? '' : r.warn;
+    return warn ? (res instanceof Blob ? { blob: res, ext: target, warn } : { ...res, warn }) : res;
+  }
   try { return await convertCad(item, onStatus); }
   catch (e) {
     if (!inBrowser) throw e;
@@ -3342,8 +3355,33 @@ async function convertDrawing(item, opts, onStatus) {
   }
 }
 
-async function convertCad(item, onStatus) {
-  const { file, ext, target } = item;
+/** PDF чертежа → DOCX/ODT/RTF/HTML: каждый лист — картинкой во всю ширину страницы */
+async function drawingPdfToDoc(pdf, target, onProgress, onStatus) {
+  const parts = [];
+  for await (const pg of pdfPages(pdf, 2600)) {
+    onStatus(`Лист ${pg.index} из ${pg.total}…`);
+    const c = await pg.canvas();
+    const w = 640, h = Math.round(c.height * w / c.width);
+    parts.push(`<p style="text-align:center"><img src="${c.toDataURL('image/png')}" width="${w}" height="${h}"></p>`);
+    c.width = c.height = 0;
+    if (pg.release) pg.release();
+    onProgress(pg.index / pg.total * 0.9);
+  }
+  if (!parts.length) throw new Error('В чертеже нет листов.');
+  const html = parts.join('\n<hr>\n');
+  onStatus('Сохранение…');
+  switch (target) {
+    case 'docx': return htmlToDocx(html);
+    case 'odt': return htmlToOdt(html);
+    case 'rtf': return htmlToRtf(html);
+    case 'html': return new Blob([htmlPage(pdf.name.replace(/\.pdf$/i, ''), html)], { type: MIME.html });
+  }
+  throw new Error('Неизвестный целевой формат.');
+}
+
+async function convertCad(item, onStatus, targetOverride) {
+  const { file, ext } = item;
+  const target = targetOverride || item.target;
   // детали часто лежат в подпапках (STANDART PARTS\, OTHER\…) или уровнем выше —
   // берём все CAD-файлы из той же корневой папки/архива, сохраняя относительные пути
   const rootOf = (p) => (p || '').split('/')[0];

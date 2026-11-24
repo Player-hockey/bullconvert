@@ -1,6 +1,6 @@
 // BullConvert service worker: приложение открывается без сети,
 // а библиотеки из vendor/ после первого использования берутся из кэша.
-const VERSION = 'bc-v27';
+const VERSION = 'bc-v28';
 const SHELL = `${VERSION}-shell`;
 // Библиотеки в vendor/ лежат по путям с номером версии — их кэш не сбрасывается при обновлении
 const LIBS = 'bc-vendor-1';
