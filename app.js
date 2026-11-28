@@ -930,9 +930,19 @@ async function ocrRunner(pagesNeeded = 2) {
   const free = [...ws], waiting = [];
   const acquire = () => (free.length ? Promise.resolve(free.pop()) : new Promise((r) => waiting.push(r)));
   const release = (w) => (waiting.length ? waiting.shift()(w) : free.push(w));
+  let growing = false;
   return {
     size: ws.length,
     async run(fn) { const w = await acquire(); try { return await fn(w); } finally { release(w); } },
+    /** сканов оказалось много — в фоне добавляем распознаватели, работа не ждёт их загрузки */
+    grow() {
+      if (growing || ws.length >= OCR_POOL_SIZE) return;
+      growing = true;
+      while (ocrExtraWorkers.length < OCR_POOL_SIZE - 1) ocrExtraWorkers.push(createOcrWorker(false).catch(() => null));
+      for (const p of ocrExtraWorkers.slice(ws.length - 1, OCR_POOL_SIZE - 1)) {
+        p.then((w) => { if (w && !ws.includes(w)) { ws.push(w); release(w); } });
+      }
+    },
   };
 }
 
@@ -1082,17 +1092,153 @@ async function renderPdfPage(page, targetWidth) {
   return canvas;
 }
 
-/** Перебор страниц PDF: { index, total, canvas(), text } */
-async function* pdfPages(file, width = 1700) {
+/** Отрисовка страницы-скана на холст, из которого потом читаются пиксели (таблицы, рисунки) */
+async function renderPdfPageOps(page, targetWidth) {
+  const base = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: canvasFit(base.width, base.height, Math.min(4, targetWidth / base.width)) });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport, intent: 'print' }).promise;
+  return { canvas };
+}
+
+const pageText = (content) => { let text = ''; for (const it of content.items) text += it.str + (it.hasEOL ? '\n' : ''); return text; };
+
+/**
+ * Перебор страниц PDF: { index, total, canvas(), text, html() }.
+ * parallel: разметка страниц (html) готовится заранее в нескольких потоках pdf.js —
+ * каждый поток открывает свою копию документа, так тяжёлые сканы расшифровываются одновременно.
+ */
+async function* pdfPages(file, width = 1700, opt = {}) {
   const pdfjs = await getPdfJs();
-  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), ...PDFJS_OPTS() }).promise;
-  for (let p = 1; p <= pdf.numPages; p++) {
-    const page = await pdf.getPage(p);
-    const content = await page.getTextContent();
-    let text = '';
-    for (const it of content.items) text += it.str + (it.hasEOL ? '\n' : '');
-    yield { index: p, total: pdf.numPages, text, content, canvas: () => renderPdfPage(page, width), html: () => pdfPageToHtml(page, content) };
+  const data = new Uint8Array(await file.arrayBuffer());
+  const open = () => pdfjs.getDocument({ data: data.slice(), ...PDFJS_OPTS() }).promise;
+  const pdf = await open();
+  const n = pdf.numPages;
+  const K = opt.parallel && n > 3 ? Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)) : 1;
+  const docs = [{ pdf, state: {} }];
+  const ahead = new Map();
+  // доля страниц с текстовым слоем (по выборке): в таком документе страница без текста — обложка или рисунок, а не скан
+  let textShare = 0;
+  try {
+    const sample = [...new Set(Array.from({ length: Math.min(8, n) }, (_, i) => 1 + Math.round(i * (n - 1) / Math.max(1, Math.min(8, n) - 1))))];
+    let withText = 0;
+    for (const p of sample) { const pg = await pdf.getPage(p); if (pageText(await pg.getTextContent()).replace(/\s/g, '').length >= 50) withText++; }
+    textShare = withText / sample.length;
+  } catch { /* оценка не удалась — считаем документ сканом */ }
+  try {
+    for (let i = 1; i < K; i++) docs.push({ pdf: await open(), state: {} });
+    // страница p всегда обрабатывается в своём потоке: соседние страницы идут одновременно
+    const htmlOf = (p) => {
+      if (!ahead.has(p)) {
+        const d = docs[p % K];
+        ahead.set(p, (async () => {
+          const page = await d.pdf.getPage(p);
+          const content = await page.getTextContent();
+          // скан без текста распознаётся отдельно (OCR) — разметку не готовим
+          if (pageText(content).replace(/\s/g, '').length < 10) return '';
+          return pdfPageToHtml(page, content, d.state);
+        })());
+        ahead.get(p).catch(() => {}); // ошибка дойдёт до того, кто ждёт эту страницу
+      }
+      return ahead.get(p);
+    };
+    for (let p = 1; p <= n; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      const text = pageText(content);
+      if (K > 1) for (let q = p; q <= Math.min(n, p + K * 2 - 1); q++) htmlOf(q);
+      yield {
+        index: p, total: n, text, content, textShare, canvas: () => renderPdfPage(page, width),
+        html: K > 1 ? () => htmlOf(p).finally(() => ahead.delete(p)) : () => pdfPageToHtml(page, content, docs[0].state),
+      };
+    }
+  } finally {
+    for (const d of docs.slice(1)) d.pdf.destroy().catch(() => {});
   }
+}
+
+/**
+ * Исправления текста, распознанного FineReader и другими OCR: буквы вразрядку
+ * («А в т о р ы» → «Авторы», «Г О С Т» → «ГОСТ»), оторванная первая буква («П етербург» → «Петербург»).
+ */
+function fixOcrSpacing(s) {
+  if (!/ /.test(s)) return s;
+  const L = 'А-ЯЁа-яёA-Za-z';
+  s = s.replace(new RegExp(`(?<![${L}])(?:[${L}] ){3,}[${L}](?![${L}])`, 'g'), (m) => m.replace(/ /g, ''));
+  s = s.replace(/(?<![А-ЯЁа-яё])Г ?О ?С ?Т(?![А-ЯЁа-яё])/g, 'ГОСТ');
+  // заглавная, которая сама словом не бывает, + остаток слова
+  let hit = false;
+  s = s.replace(/(?<![А-ЯЁа-яё])([БГДЖЗЙЛМНПРТФХЦЧШЩЭЮЕЁ]) ([а-яё]{2,})/g, (m, a, b) => { hit = true; return a + b; });
+  // если в строке уже был такой разрыв — так же склеиваем и «С анкт», «И здательство»
+  if (hit) s = s.replace(/(?<![А-ЯЁа-яё])([СВКОУИАЯ]) ([а-яё]{3,})/g, '$1$2');
+  return s;
+}
+
+/**
+ * Рисунки на странице-скане (текст распознан, а рисунок остался только на картинке страницы):
+ * ищем крупные области «чернил» вне строк текста и таблиц. Возвращает рамки в pt.
+ */
+function scanFigures(canvas, k, els, tables, W, H) {
+  const g = 3; // клетка сетки, pt
+  const gw = Math.ceil(W / g), gh = Math.ceil(H / g);
+  const cw = canvas.width, ch = canvas.height;
+  const d = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, cw, ch).data;
+  const cnt = new Uint16Array(gw * gh);
+  const step = k * g;
+  for (let py = 0; py < ch; py++) {
+    const row = Math.min(gh - 1, Math.floor(py / step)) * gw;
+    for (let px = 0, i = py * cw * 4; px < cw; px++, i += 4) {
+      if (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114 < 150) cnt[row + Math.min(gw - 1, Math.floor(px / step))]++;
+    }
+  }
+  const ink = new Uint8Array(gw * gh);
+  for (let i = 0; i < ink.length; i++) ink[i] = cnt[i] >= 2 ? 1 : 0;
+  const clear = (x0, y0, x1, y1) => {
+    for (let y = Math.max(0, Math.floor(y0 / g)); y <= Math.min(gh - 1, Math.floor(y1 / g)); y++)
+      for (let x = Math.max(0, Math.floor(x0 / g)); x <= Math.min(gw - 1, Math.floor(x1 / g)); x++) ink[y * gw + x] = 0;
+  };
+  for (const e of els) if (e.str.trim() && e.w > 0) clear(e.x - 1, e.y - e.size * 0.9, e.x + e.w + 1, e.y + e.size * 0.3);
+  for (const t of tables) clear(t.x0 - 2, t.y0 - 2, t.x1 + 2, t.y1 + 2);
+  // связные области (с допуском в 2 клетки — подписи и штриховка не рвут рисунок)
+  const seen = new Uint8Array(gw * gh), boxes = [];
+  for (let s = 0; s < ink.length; s++) {
+    if (!ink[s] || seen[s]) continue;
+    const q = [s]; seen[s] = 1;
+    let x0 = gw, y0 = gh, x1 = 0, y1 = 0, n = 0;
+    while (q.length) {
+      const c = q.pop(), cx = c % gw, cy = (c - cx) / gw;
+      n++; if (cx < x0) x0 = cx; if (cx > x1) x1 = cx; if (cy < y0) y0 = cy; if (cy > y1) y1 = cy;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+        const j = ny * gw + nx;
+        if (ink[j] && !seen[j]) { seen[j] = 1; q.push(j); }
+      }
+    }
+    const bw = (x1 - x0 + 1) * g, bh = (y1 - y0 + 1) * g;
+    // мелочь, линейки, рамка листа и тонкие полосы по краю скана — не рисунки
+    if (bw < 30 || bh < 12 || n < 12 || bw * bh > W * H * 0.92 || (bw < 8 || bh < 8)) continue;
+    if (bh < 15 && n < (bw / g) * 1.5) continue; // одна горизонтальная черта
+    boxes.push({ x: Math.max(0, x0 * g - 3), y: Math.max(0, y0 * g - 3), w: Math.min(W, (x1 + 1) * g + 3) - Math.max(0, x0 * g - 3), h: Math.min(H, (y1 + 1) * g + 3) - Math.max(0, y0 * g - 3) });
+  }
+  // пересекающиеся рамки объединяем
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let i = 0; i < boxes.length && !changed; i++) for (let j = i + 1; j < boxes.length && !changed; j++) {
+      const a = boxes[i], b = boxes[j];
+      if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) {
+        const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+        boxes[i] = { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+        boxes.splice(j, 1); changed = true;
+      }
+    }
+  }
+  return boxes;
 }
 
 /**
@@ -1170,24 +1316,28 @@ function imageSegments(canvas, k) {
   const w = canvas.width, h = canvas.height;
   const d = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
   const dark = new Uint8Array(w * h);
-  for (let i = 0, j = 0; i < d.length; i += 4, j++) dark[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114 < 140 ? 1 : 0;
+  // бледные линии скана тоже считаются (порог 170, а не 140)
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) dark[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114 < 170 ? 1 : 0;
   const hs = [], vs = [];
   const minH = Math.max(40, w * 0.06), minV = Math.max(30, h * 0.02);
+  const GAP = 3; // разрыв линии до 3 точек — не конец линии
+  // линия на скане бывает чуть наклонной — соседний ряд точек считается той же линией
   for (let y = 0; y < h; y++) {
-    let run = 0;
+    let run = 0, miss = 0;
+    const r0 = y * w, r1 = y + 1 < h ? (y + 1) * w : r0;
     for (let x = 0; x <= w; x++) {
-      // небольшие разрывы (1–2 точки) в линии не считаются концом
-      const on = x < w && (dark[y * w + x] || (x + 2 < w && dark[y * w + x + 2] && run > 0));
-      if (on) run++;
-      else { if (run >= minH) hs.push({ y: y * k, a: (x - run) * k, b: x * k }); run = 0; }
+      if (x < w && (dark[r0 + x] || dark[r1 + x])) { run += 1 + miss; miss = 0; }
+      else if (run > 0 && miss < GAP && x < w) miss++;
+      else { if (run >= minH) hs.push({ y: y * k, a: (x - miss - run) * k, b: (x - miss) * k }); run = 0; miss = 0; }
     }
   }
   for (let x = 0; x < w; x++) {
-    let run = 0;
+    let run = 0, miss = 0;
+    const x1 = x + 1 < w ? x + 1 : x;
     for (let y = 0; y <= h; y++) {
-      const on = y < h && (dark[y * w + x] || (y + 2 < h && dark[(y + 2) * w + x] && run > 0));
-      if (on) run++;
-      else { if (run >= minV) vs.push({ x: x * k, a: (y - run) * k, b: y * k }); run = 0; }
+      if (y < h && (dark[y * w + x] || dark[y * w + x1])) { run += 1 + miss; miss = 0; }
+      else if (run > 0 && miss < GAP && y < h) miss++;
+      else { if (run >= minV) vs.push({ x: x * k, a: (y - miss - run) * k, b: (y - miss) * k }); run = 0; miss = 0; }
     }
   }
   return { hs, vs };
@@ -1274,16 +1424,19 @@ function gridTables(hs, vs, items) {
       }
       const lineText = (l) => {
         let s = '', end = null;
-        for (const it of l.items.sort((p, q) => p.x - q.x)) { if (end != null && it.x - end > it.size * 0.2 && !/\s$/.test(s)) s += ' '; s += it.str; end = it.x + it.w; }
+        for (const it of l.items.sort((p, q) => p.x - q.x)) { if (end != null && it.x - end > it.size * 0.2 && !/\s$/.test(s)) s += ' '; s += fixOcrSpacing(it.str); end = it.x + it.w; }
         return s.replace(/\s+/g, ' ').trim();
       };
       const texts = lns.map(lineText).filter(Boolean);
       // переносы слов внутри ячейки склеиваем, остальные строки — через пробел (это одна ячейка, а не абзацы)
       let text = '';
-      for (const t of texts) text = !text ? t : /[a-zа-яё]-$/i.test(text) && /^[a-zа-яё]/.test(t) ? text.slice(0, -1) + t : text + ' ' + t;
+      // «буква | строчная буква» — возможно, перенос без дефиса (скан): решит словарь документа (resolveLineBreaks)
+      for (const t of texts) text = !text ? t : /[a-zа-яё]-$/i.test(text) && /^[a-zа-яё]/.test(t) ? text.slice(0, -1) + t
+        : /[a-zа-яё]$/i.test(text) && /^[a-zа-яё]/.test(t) ? text + '⁤' + t : text + ' ' + t;
       const bold = b.items.length && b.items.every((it) => it.bold);
       const cs = b.c1 - b.c0 + 1, rs = b.r1 - b.r0 + 1;
-      rows[b.r0][b.c0] = { text, html: bold ? `<b>${escapeHtml(text)}</b>` : escapeHtml(text), colspan: cs, rowspan: rs };
+      // text — для таблиц Excel (стык строк — пробел), html — с пометкой стыка для документа
+      rows[b.r0][b.c0] = { text: text.replace(/⁤/g, ' '), html: bold ? `<b>${escapeHtml(text)}</b>` : escapeHtml(text), colspan: cs, rowspan: rs };
       for (let r = b.r0; r <= b.r1; r++) for (let c = b.c0; c <= b.c1; c++) if (r !== b.r0 || c !== b.c0) rows[r][c] = undefined; // занято объединением
     }
     tables.push({ x0, y0, x1, y1, rows });
@@ -1296,12 +1449,18 @@ function pdfTableHtml(t) {
     : `<td${c.colspan > 1 ? ` colspan="${c.colspan}"` : ''}${c.rowspan > 1 ? ` rowspan="${c.rowspan}"` : ''}>${c.html}</td>`)).join('') + '</tr>').join('') + '</table>';
 }
 
-async function pdfPageToHtml(page, content) {
+async function pdfPageToHtml(page, content, state = {}) {
   const vp = page.getViewport({ scale: 1 });
   const H = vp.height;
-  // список операций: из него — положение картинок; заодно pdf.js загружает шрифты (нужны имена для «жирный»)
-  let ops = null;
-  try { ops = await page.getOperatorList(); } catch { /* без картинок */ }
+  // список операций: из него — положение картинок; заодно pdf.js загружает шрифты (нужны имена для «жирный»).
+  // В документе-скане страница всё равно рисуется (рисунки, таблицы) — берём операции из отрисовки, а не расшифровываем скан второй раз.
+  // Расшифровка скана (JPEG 2000, JBIG2) — самое долгое, поэтому в документе-скане страница только рисуется:
+  // список операций не запрашивается (шрифты загружаются при отрисовке, рисунки ищутся по картинке).
+  let ops = null, canvas = null;
+  if (state.scan) {
+    try { ({ canvas } = await renderPdfPageOps(page, vp.width * 2)); } catch { canvas = null; }
+  }
+  if (!canvas) { try { ops = await page.getOperatorList({ intent: 'print' }); } catch { /* без картинок */ } }
   const fontInfo = {};
   const isBold = (fn) => {
     if (fn in fontInfo) return fontInfo[fn];
@@ -1320,6 +1479,66 @@ async function pdfPageToHtml(page, content) {
   let tables = [];
   const allEls = els.slice();
   try { const t = pdfRuledTables(ops, H, allEls); tables = t.tables; els.length = 0; els.push(...t.rest); } catch (e) { console.warn('Таблицы PDF:', e); }
+
+  // скан с распознанным текстом: картинка во всю страницу под текстом
+  const textCount = els.filter((e) => e.str.trim()).length;
+  const imgs = [];
+  let scanBg = !!canvas && textCount > 3;
+  if (ops) {
+    const OPS = pdfjsLib.OPS;
+    const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+    let ctm = [1, 0, 0, 1, 0, 0];
+    const stack = [];
+    for (let i = 0; i < ops.fnArray.length; i++) {
+      const fn = ops.fnArray[i], args = ops.argsArray[i];
+      if (fn === OPS.save) stack.push(ctm);
+      else if (fn === OPS.restore) ctm = stack.pop() || ctm;
+      else if (fn === OPS.transform) ctm = mul(ctm, args);
+      else if (fn === OPS.paintFormXObjectBegin) { stack.push(ctm); if (args && args[0]) ctm = mul(ctm, args[0]); }
+      else if (fn === OPS.paintFormXObjectEnd) ctm = stack.pop() || ctm;
+      else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject || fn === OPS.paintJpegXObject || fn === OPS.paintImageMaskXObject) {
+        const pts = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([u, v]) => [ctm[0] * u + ctm[2] * v + ctm[4], ctm[1] * u + ctm[3] * v + ctm[5]]);
+        const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+        const bx = Math.max(0, Math.min(...xs)), by = Math.max(0, H - Math.max(...ys));
+        const bw = Math.min(vp.width, Math.max(...xs)) - bx, bh = Math.min(H, H - Math.min(...ys)) - by;
+        if (bw < 24 || bh < 24) continue; // значки и линии
+        if (bw * bh > vp.width * H * 0.8 && textCount > 3) { scanBg = true; continue; } // фон-скан под распознанным текстом
+        if (fn === OPS.paintImageMaskXObject) continue; // маска — не самостоятельная картинка
+        if (imgs.some((m) => Math.abs(m.x - bx) < 2 && Math.abs(m.y - by) < 2)) continue;
+        imgs.push({ x: bx, y: by, w: bw, h: bh });
+      }
+    }
+  }
+  if (scanBg) state.scan = true; // следующие страницы этого документа сразу рисуем
+  let figs = [];
+  if (scanBg) {
+    try {
+      if (!canvas) canvas = (await renderPdfPageOps(page, vp.width * 2)).canvas;
+      const k = canvas.width / vp.width;
+      // таблицы с рамками, нарисованными на скане
+      if (!tables.length) {
+        const { hs, vs } = imageSegments(canvas, 1 / k);
+        const t = gridTables(hs, vs, els.slice());
+        const good = t.tables.filter((tb) => {
+          const cells = tb.rows.flat().filter(Boolean);
+          const filled = cells.filter((c) => c.text).length;
+          return tb.rows.length >= 2 && filled >= 3 && filled >= cells.length * 0.5;
+        });
+        if (good.length) {
+          tables = good;
+          const inside = (e) => good.some((tb) => { const cx = e.x + (e.w || 0) / 2, cy = e.y - e.size * 0.35; return cx > tb.x0 && cx < tb.x1 && cy > tb.y0 && cy < tb.y1; });
+          const keep = els.filter((e) => !inside(e));
+          els.length = 0; els.push(...keep);
+        }
+      }
+      // рисунки, оставшиеся только на картинке страницы; подписи внутри рисунка — часть рисунка
+      figs = scanFigures(canvas, k, els, tables, vp.width, H);
+      if (figs.length) {
+        const keep = els.filter((e) => { const cx = e.x + (e.w || 0) / 2, cy = e.y - e.size * 0.35; return !figs.some((f) => cx > f.x && cx < f.x + f.w && cy > f.y && cy < f.y + f.h); });
+        els.length = 0; els.push(...keep);
+      }
+    } catch (e) { console.warn('Скан: таблицы и рисунки', e); }
+  }
   els.sort((p, q) => p.y - q.y || p.x - q.x);
   const lines = [];
   for (const e of els) {
@@ -1342,7 +1561,8 @@ async function pdfPageToHtml(page, content) {
     for (const it of l.items) {
       const small = it.size < l.size * 0.85;
       const va = small && l.y - it.y > l.size * 0.15 ? 'sup' : small && it.y - l.y > l.size * 0.08 ? 'sub' : null;
-      let s = it.str;
+      // буквы вразрядку исправляем внутри куска: границы кусков — это границы слов («Б И Б Л И О…» | «С П И С О К»)
+      let s = fixOcrSpacing(it.str);
       if (prevEnd != null && it.x - prevEnd > it.size * 0.2 && !/\s$/.test(l.runs.map((r) => r.t).join('')) && !/^\s/.test(s)) s = ' ' + s;
       const r = l.runs[l.runs.length - 1];
       if (r && r.b === it.bold && r.va === va) r.t += s; else l.runs.push({ t: s, b: it.bold, va });
@@ -1367,6 +1587,25 @@ async function pdfPageToHtml(page, content) {
   const lineGap = median(gaps) || bodySize * 1.3;
   const left = median(textLines.map((l) => Math.round(l.x0))) || 0;
   const right = Math.max(...textLines.map((l) => l.x1), 0);
+  // текст по ширине: правый край полных строк. FineReader теряет знак переноса — такая строка
+  // короче полной ровно на ширину дефиса (≈ 0,2–0,7 кегля), по этому и узнаём перенос
+  // (верхняя четверть, а не медиана: строк с потерянным дефисом бывает почти половина)
+  const nearFull = textLines.filter((l) => l.x1 > right - l.size * 1.5).map((l) => l.x1).sort((a, b) => b - a);
+  const fullRight = nearFull.length ? nearFull[Math.floor(nearFull.length / 4)] : right;
+  const justified = textLines.filter((l) => Math.abs(fullRight - l.x1) < l.size * 0.12).length >= Math.max(3, textLines.length * 0.25);
+  const wordBreak = (l, next) => /[а-яёa-z]$/i.test(l.text) && /^[а-яёa-z]/.test(next.text);
+  const lostHyphen = (l, next) => justified && wordBreak(l, next) && fullRight - l.x1 >= l.size * 0.18 && fullRight - l.x1 <= l.size * 0.75;
+  // Дефисы потеряны (а не просто стоят у края)? Тогда стык строк «буква | строчная буква» помечаем:
+  // перенос это или пробел, решит словарь всего документа (resolveLineBreaks). Подсказка по геометрии:
+  // ⁣ — строка короче на ширину дефиса, ⁤ — строка полная.
+  let geo = 0, explicit = 0, breaks = 0;
+  for (let i = 1; i < textLines.length; i++) {
+    const a = textLines[i - 1], b = textLines[i];
+    if (/[а-яёa-z]-$/i.test(a.text) && /^[а-яёa-z]/.test(b.text)) explicit++;
+    else if (wordBreak(a, b)) { breaks++; if (lostHyphen(a, b)) geo++; }
+  }
+  // распознанный скан (FineReader) — всегда; обычный PDF — если переносы есть, а дефисов на концах строк нет
+  const markBreaks = scanBg || (justified && (geo > explicit || (explicit === 0 && breaks >= 3)));
 
   // строки → абзацы
   const headingLike = (l) => l.size >= bodySize * 1.12 || (l.bold && l.text.length < 90);
@@ -1406,6 +1645,7 @@ async function pdfPageToHtml(page, content) {
       if (i > 0) {
         // перенос слова: «конвер-» + «тация» → «конвертация»
         if (/[a-zа-яё]-$/i.test(html.replace(/<[^>]+>/g, '')) && /^[a-zа-яё]/.test(l.text)) html = html.replace(/-(<\/b>)?$/, '$1');
+        else if (markBreaks && wordBreak(p.lines[i - 1], l)) html += lostHyphen(p.lines[i - 1], l) ? '⁣' : '⁤';
         else html += ' ';
       }
       html += part;
@@ -1429,37 +1669,12 @@ async function pdfPageToHtml(page, content) {
   for (const t of tables) blocks.push({ y: t.y0, html: pdfTableHtml(t) });
 
   // картинки: положение по матрице преобразования, вырезаем с отрисованной страницы
-  const imgs = [];
-  if (ops) {
-    const OPS = pdfjsLib.OPS;
-    const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
-    let ctm = [1, 0, 0, 1, 0, 0];
-    const stack = [];
-    for (let i = 0; i < ops.fnArray.length; i++) {
-      const fn = ops.fnArray[i], args = ops.argsArray[i];
-      if (fn === OPS.save) stack.push(ctm);
-      else if (fn === OPS.restore) ctm = stack.pop() || ctm;
-      else if (fn === OPS.transform) ctm = mul(ctm, args);
-      else if (fn === OPS.paintFormXObjectBegin) { stack.push(ctm); if (args && args[0]) ctm = mul(ctm, args[0]); }
-      else if (fn === OPS.paintFormXObjectEnd) ctm = stack.pop() || ctm;
-      else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject || fn === OPS.paintJpegXObject) {
-        const pts = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([u, v]) => [ctm[0] * u + ctm[2] * v + ctm[4], ctm[1] * u + ctm[3] * v + ctm[5]]);
-        const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
-        const bx = Math.max(0, Math.min(...xs)), by = Math.max(0, H - Math.max(...ys));
-        const bw = Math.min(vp.width, Math.max(...xs)) - bx, bh = Math.min(H, H - Math.min(...ys)) - by;
-        if (bw < 24 || bh < 24) continue; // значки и линии
-        if (bw * bh > vp.width * H * 0.8 && textLines.length > 3) continue; // фон-скан под распознанным текстом
-        if (imgs.some((m) => Math.abs(m.x - bx) < 2 && Math.abs(m.y - by) < 2)) continue;
-        if (tables.some((t) => bx >= t.x0 - 2 && bx + bw <= t.x1 + 2 && by >= t.y0 - 2 && by + bh <= t.y1 + 2)) continue; // внутри таблицы
-        imgs.push({ x: bx, y: by, w: bw, h: bh });
-      }
-    }
-  }
-  if (imgs.length) {
-    const scale = 2;
-    const c = await renderPdfPage(page, vp.width * scale);
+  const inTable = (m) => tables.some((t) => m.x >= t.x0 - 2 && m.x + m.w <= t.x1 + 2 && m.y >= t.y0 - 2 && m.y + m.h <= t.y1 + 2);
+  const crops = [...imgs.filter((m) => !inTable(m)), ...figs];
+  if (crops.length) {
+    const c = canvas || await renderPdfPage(page, vp.width * 2);
     const k = c.width / vp.width;
-    for (const m of imgs) {
+    for (const m of crops) {
       const o = document.createElement('canvas');
       o.width = Math.max(1, Math.round(m.w * k)); o.height = Math.max(1, Math.round(m.h * k));
       o.getContext('2d').drawImage(c, m.x * k, m.y * k, m.w * k, m.h * k, 0, 0, o.width, o.height);
@@ -1468,6 +1683,8 @@ async function pdfPageToHtml(page, content) {
     }
     c.width = c.height = 0;
   }
+  if (canvas) canvas.width = canvas.height = 0;
+  try { page.cleanup(); } catch { /* освобождаем память страницы */ }
   blocks.sort((p, q) => p.y - q.y);
   return blocks.map((b) => b.html).join('\n');
 }
@@ -1510,7 +1727,65 @@ async function* djvuPages(file) {
   }
 }
 
-const pagesOf = (file, ext) => (ext === 'pdf' ? pdfPages(file) : djvuPages(file));
+const pagesOf = (file, ext, opt) => (ext === 'pdf' ? pdfPages(file, 1700, opt) : djvuPages(file));
+
+/**
+ * Страницы → один документ. Абзац, разорванный границей страницы («…и по-» | «луавтоматического…»),
+ * склеивается. В книге (много таких разрывов) разрывы страниц не ставятся: текст идёт сплошным потоком,
+ * иначе в Word каждая маленькая страница книги заканчивается пустым местом.
+ */
+function joinPages(pages) {
+  const out = [];
+  let merges = 0;
+  const marked = pages.some((h) => /[⁣⁤]/.test(h));
+  for (const h of pages) {
+    const prev = out[out.length - 1];
+    const m = h.match(/^\s*<p>([\s\S]*?)<\/p>/);
+    if (prev != null && m && /<\/p>\s*$/.test(prev)) {
+      const tail = prev.replace(/<\/p>\s*$/, '').replace(/<[^>]+>/g, '');
+      const head = m[1].replace(/<[^>]+>/g, '').trimStart();
+      // абзац не закончен: нет точки в конце, а следующая страница начинается со строчной буквы
+      if (/[a-zа-яё,;\-–—]$/i.test(tail.trimEnd()) && /^[a-zа-яё]/.test(head)) {
+        const hyph = /[a-zа-яё]-$/i.test(tail.trimEnd());
+        // «буква | буква» на стыке страниц — возможно, перенос без дефиса: решит словарь документа
+        const sep = hyph ? '' : marked && /[a-zа-яё]$/i.test(tail.trimEnd()) ? '⁤' : ' ';
+        out[out.length - 1] = prev.replace(/\s*<\/p>\s*$/, '').replace(/-$/, hyph ? '' : '-') + sep + m[1].trimStart() + '</p>' + h.slice(m[0].length);
+        merges++;
+        continue;
+      }
+    }
+    out.push(h);
+  }
+  const book = pages.length > 3 && merges >= (pages.length - 1) * 0.15;
+  return resolveLineBreaks(out.join(book ? '\n' : '\n<hr>\n'));
+}
+
+/**
+ * Стыки строк, помеченные при разборе PDF (FineReader теряет дефис переноса): «до⁣кументация» → «документация»,
+ * «позволяют⁤получать» → «позволяют получать». Решаем по словарю этого же документа:
+ * слово целиком встречается в тексте — перенос; обе части — обычные слова — пробел; иначе — по геометрии строки.
+ */
+function resolveLineBreaks(html) {
+  if (!/[⁣⁤]/.test(html)) return html;
+  const vocab = new Set(), prefixes = new Set();
+  const plain = html.replace(/<[^>]+>/g, ' ').replace(/[a-zа-яё]+[⁣⁤][a-zа-яё]+/gi, ' ').toLowerCase();
+  for (const w of plain.match(/[a-zа-яё]+/g) || []) {
+    if (vocab.has(w)) continue;
+    vocab.add(w);
+    for (let i = 3; i < w.length; i++) prefixes.add(w.slice(0, i));
+  }
+  return html.replace(/([a-zа-яё]+)([⁣⁤])([a-zа-яё]+)/gi, (m, a, mark, b) => {
+    const A = a.toLowerCase(), B = b.toLowerCase(), join = a + b, space = `${a} ${b}`;
+    if (vocab.has(A + B)) return join;                      // слово целиком есть в тексте
+    const va = vocab.has(A), vb = vocab.has(B);
+    if (va && vb) return space;                             // два обычных слова
+    if (va && B.length <= 3) return join;                   // окончание: «сопровождает|ся»
+    // «назна|чают» — есть «назначение», «назначать»; целое первое слово («с | помощью») склеиваем, только если строка короче на дефис
+    if ((!va || mark === '⁣') && prefixes.has(A + B.slice(0, A.length <= 3 ? 3 : 2))) return join;
+    if (vb && A.length >= 4) return space;                  // вторая часть — известное слово: «пространственная | структура»
+    return mark === '⁣' && !va ? join : space;         // остальное — по длине строки
+  }).replace(/⁣/g, '').replace(/⁤/g, ' ');
+}
 
 /** Страницы → картинки (одна страница — один файл, несколько — ZIP). */
 async function pagesToImages(file, ext, target, opts, onProgress, onStatus) {
@@ -1677,20 +1952,47 @@ async function imageToXlsx(file, ext, opts, onProgress, onStatus) {
 }
 
 /** Текст всех страниц; страницы без текстового слоя (сканы) распознаются OCR. */
+/** Страница целиком картинкой (обложка); почти белая страница — пропускается */
+function pageImageHtml(c) {
+  const s = document.createElement('canvas');
+  s.width = 60; s.height = Math.max(1, Math.round(60 * c.height / c.width));
+  const sc = s.getContext('2d', { willReadFrequently: true });
+  sc.drawImage(c, 0, 0, s.width, s.height);
+  const d = sc.getImageData(0, 0, s.width, s.height).data;
+  let ink = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] < 600) ink++;
+  if (ink < s.width * s.height * 0.01) return '';
+  const w = 600, h = Math.round(c.height * w / c.width);
+  return `<p style="text-align:center"><img src="${c.toDataURL('image/jpeg', 0.85)}" width="${w}" height="${h}"></p>`;
+}
+
 async function pagesToHtml(file, ext, onProgress, onStatus) {
   const pages = [];
   let ocrCount = 0, runner = null, pipe = null, done = 0;
-  for await (const pg of pagesOf(file, ext)) {
+  for await (const pg of pagesOf(file, ext, { parallel: true })) {
     const text = pg.text;
+    if (text.replace(/\s/g, '').length < 10 && pg.textShare >= 0.6) {
+      // в документе с текстом страница без текста — обложка, рисунок или пустая: вставляем картинкой (распознавать нечего)
+      onStatus(`Чтение: страница ${pg.index} из ${pg.total}…`);
+      const c = await pg.canvas();
+      const html = pageImageHtml(c);
+      c.width = c.height = 0;
+      const idx = pages.length;
+      pages.push(html);
+      if (pipe) pipe.skip(idx, null); else onProgress(pg.index / pg.total * 0.9);
+      continue;
+    }
     if (text.replace(/\s/g, '').length < 10) {
       // скан: распознаём в нескольких потоках, пока следующие страницы уже рисуются
       ocrCount++;
       if (!runner) {
         if (!ocrWorkerPromise) onStatus('Загрузка модуля распознавания текста (один раз)…');
-        runner = await ocrRunner(pg.total);
-        pipe = orderedPipe(runner.size + 1, (i, t) => { if (t != null) pages[i] = textToHtml(t); onProgress(++done / pg.total * 0.9); });
+        // сначала один распознаватель: в книге со сканом-обложкой не ждём загрузки четырёх
+        runner = await ocrRunner(1);
+        pipe = orderedPipe(OCR_POOL_SIZE + 1, (i, t) => { if (t != null) pages[i] = textToHtml(t); onProgress(++done / pg.total * 0.9); });
         for (let k = 0; k < pages.length; k++) pipe.skip(k, null); // страницы до первого скана уже готовы
       }
+      if (ocrCount >= 3) runner.grow();
       onStatus(`Распознавание текста: страница ${pg.index} из ${pg.total}…`);
       const c = await pg.canvas();
       const idx = pages.length;
@@ -1714,7 +2016,7 @@ async function pagesToHtml(file, ext, onProgress, onStatus) {
   if (pipe) await pipe.done();
   if (!pages.join('').replace(/<[^>]+>/g, '').trim()) throw new Error('Текст не найден — даже распознавание ничего не нашло.');
   if (ocrCount) onStatus(`Распознано страниц: ${ocrCount} из ${pages.length}. Сохранение…`);
-  return pages.join('\n<hr>\n');
+  return joinPages(pages.map((h) => h || ''));
 }
 
 /* =========================== ЭЛЕКТРОННЫЕ КНИГИ =========================== */
